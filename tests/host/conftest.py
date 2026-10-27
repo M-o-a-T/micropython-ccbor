@@ -1,5 +1,5 @@
 """Shared helpers for the host tests: they drive MicroPython unix builds of
-msgpackc (build/unix-<flavour>/micropython, made by tools/build-unix.sh)."""
+ccbor (build/unix-<flavour>/micropython, made by tools/build-unix.sh)."""
 
 import os
 import subprocess
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-FLAVOURS = os.environ.get("MSGPACKC_FLAVOURS", "standard float32").split()
+FLAVOURS = os.environ.get("CCBOR_FLAVOURS", "standard float32").split()
 
 
 def micropython(flavour):
@@ -39,7 +39,7 @@ def run_mp(flavour, *args, path=(), heap="512M", timeout=1800, cwd=None):
 
 # Builds whose ints stop at 64 bits (MICROPY_LONGINT_IMPL_LONGLONG) cannot even
 # compile the tests that use larger ints: they run only the rest.
-INTBIG_TESTS = {"msgpackc_pack.py", "msgpackc_unpack.py", "msgpackc_errors.py"}
+INTBIG_TESTS = {"ccbor_pack.py", "ccbor_unpack.py", "ccbor_errors.py"}
 LONGLONG = {"longlong"}
 
 
@@ -58,4 +58,4 @@ def bigint_flavour(flavour):
 
 @pytest.fixture
 def quick():
-    return os.environ.get("MSGPACKC_QUICK") == "1"
+    return os.environ.get("CCBOR_QUICK") == "1"

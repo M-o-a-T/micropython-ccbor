@@ -1,13 +1,13 @@
 # ALoader: asynchronous decoding from an asyncio StreamReader-like object.
 try:
-    import msgpackc
+    import ccbor
     import asyncio
-    from msgpackc import ALoader
+    from ccbor import ALoader
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 
 
 class FakeReader:

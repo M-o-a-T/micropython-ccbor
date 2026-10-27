@@ -1,5 +1,5 @@
 /*
- * This file is part of msgpackc, a MessagePack module for MicroPython.
+ * This file is part of ccbor, a MessagePack module for MicroPython.
  *
  * The MIT License (MIT)
  *
@@ -24,14 +24,17 @@
  * THE SOFTWARE.
  */
 
-// msgpackc: MessagePack (https://msgpack.org) for MicroPython, written in C.
+// ccbor: a binary serializer for MicroPython, written in C.
 //
-// The Python API and its behaviour follow Peter Hinch's pure-Python umsgpack
+// This is the MessagePack edition: the wire format is MessagePack
+// (https://msgpack.org) and the Python API and its behaviour follow Peter
+// Hinch's pure-Python umsgpack
 // (https://github.com/peterhinch/micropython-msgpack), itself a port of Vanya
 // Sergeev's u-msgpack-python. Same functions, options, exceptions and
 // ext_serializable decorator, and byte-for-byte identical output, so one can
 // replace the other. The encoder started as the msgpack accelerator of the
-// coIoTe firmware.
+// coIoTe firmware. The module is being converted to CBOR (RFC 8949); this
+// comment will go with it.
 //
 // Design notes:
 // - The encoder writes into a single growable buffer which becomes the
@@ -66,41 +69,41 @@
 // has 16 KiB: 32 levels leave room for the VM, the GC and raising an exception
 // at the deepest level. The same limit everywhere means that data packed on
 // one port can be unpacked on any other. On ports with MICROPY_STACK_CHECK the
-// stack is also checked at every level. Override with -DMSGPACKC_MAX_DEPTH=n.
-#ifndef MSGPACKC_MAX_DEPTH
-#define MSGPACKC_MAX_DEPTH (32)
+// stack is also checked at every level. Override with -DCCBOR_MAX_DEPTH=n.
+#ifndef CCBOR_MAX_DEPTH
+#define CCBOR_MAX_DEPTH (32)
 #endif
 
 // Map keys that already exist as qstrs reuse them instead of allocating a
 // copy. Keys usually do: the application writes them as literals, which are
 // qstrs (msg["temp"]). Other strings are not looked up: a lookup that fails
 // walks the qstr pools, which costs more than the copy (measured on ESP32-P4).
-#ifndef MSGPACKC_REUSE_QSTR
-#define MSGPACKC_REUSE_QSTR (1)
+#ifndef CCBOR_REUSE_QSTR
+#define CCBOR_REUSE_QSTR (1)
 #endif
 
 /******************************************************************************/
 // Exceptions: the same hierarchy as umsgpack.
 
-#define MSGPACKC_EXCEPTION(name, base) \
-    static MP_DEFINE_CONST_OBJ_TYPE(mp_type_msgpackc_##name, MP_QSTR_##name, MP_TYPE_FLAG_NONE, \
+#define CCBOR_EXCEPTION(name, base) \
+    static MP_DEFINE_CONST_OBJ_TYPE(mp_type_ccbor_##name, MP_QSTR_##name, MP_TYPE_FLAG_NONE, \
     make_new, mp_obj_exception_make_new, \
     print, mp_obj_exception_print, \
     attr, mp_obj_exception_attr, \
     parent, &base \
     )
 
-MSGPACKC_EXCEPTION(PackException, mp_type_Exception);
-MSGPACKC_EXCEPTION(UnpackException, mp_type_Exception);
-MSGPACKC_EXCEPTION(UnsupportedTypeException, mp_type_msgpackc_PackException);
-MSGPACKC_EXCEPTION(InsufficientDataException, mp_type_msgpackc_UnpackException);
-MSGPACKC_EXCEPTION(InvalidStringException, mp_type_msgpackc_UnpackException);
-MSGPACKC_EXCEPTION(ReservedCodeException, mp_type_msgpackc_UnpackException);
-MSGPACKC_EXCEPTION(UnhashableKeyException, mp_type_msgpackc_UnpackException);
-MSGPACKC_EXCEPTION(DuplicateKeyException, mp_type_msgpackc_UnpackException);
+CCBOR_EXCEPTION(PackException, mp_type_Exception);
+CCBOR_EXCEPTION(UnpackException, mp_type_Exception);
+CCBOR_EXCEPTION(UnsupportedTypeException, mp_type_ccbor_PackException);
+CCBOR_EXCEPTION(InsufficientDataException, mp_type_ccbor_UnpackException);
+CCBOR_EXCEPTION(InvalidStringException, mp_type_ccbor_UnpackException);
+CCBOR_EXCEPTION(ReservedCodeException, mp_type_ccbor_UnpackException);
+CCBOR_EXCEPTION(UnhashableKeyException, mp_type_ccbor_UnpackException);
+CCBOR_EXCEPTION(DuplicateKeyException, mp_type_ccbor_UnpackException);
 
 static MP_NORETURN void raise_insufficient(void) {
-    mp_raise_type(&mp_type_msgpackc_InsufficientDataException);
+    mp_raise_type(&mp_type_ccbor_InsufficientDataException);
 }
 
 static MP_NORETURN void raise_depth(void) {
@@ -125,12 +128,12 @@ static MP_NORETURN void raise_with_obj(const mp_obj_type_t *exc_type, const char
 }
 
 static MP_NORETURN void raise_unsupported_type(mp_obj_t obj) {
-    raise_with_obj(&mp_type_msgpackc_UnsupportedTypeException, "",
+    raise_with_obj(&mp_type_ccbor_UnsupportedTypeException, "",
         MP_OBJ_FROM_PTR(mp_obj_get_type(obj)), PRINT_STR, "");
 }
 
 static MP_NORETURN void raise_unsupported_msg(mp_rom_error_text_t msg) {
-    mp_raise_msg(&mp_type_msgpackc_UnsupportedTypeException, msg);
+    mp_raise_msg(&mp_type_ccbor_UnsupportedTypeException, msg);
 }
 
 // Lengths above 32 bits cannot be encoded. Only possible where size_t is
@@ -149,13 +152,13 @@ static inline bool len_exceeds_u32(size_t n) {
 //
 // umsgpack keeps three dicts: custom {user class: ext_type},
 // builtins {type: (packer class, ext_type)} and packers {ext_type: class}.
-// They are kept here as attributes of a heap module "_msgpackc_ext" stored in
+// They are kept here as attributes of a heap module "_ccbor_ext" stored in
 // sys.modules: no root pointers are needed, and a soft reset (which empties
 // sys.modules) drops them together with the classes they refer to.
 
 static mp_obj_t ext_registry(bool create) {
     mp_map_t *mods = &MP_STATE_VM(mp_loaded_modules_dict).map;
-    mp_map_elem_t *e = mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR__msgpackc_ext), MP_MAP_LOOKUP);
+    mp_map_elem_t *e = mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR__ccbor_ext), MP_MAP_LOOKUP);
     if (e != NULL && mp_obj_is_type(e->value, &mp_type_module)) {
         return e->value;
     }
@@ -163,9 +166,9 @@ static mp_obj_t ext_registry(bool create) {
         return MP_OBJ_NULL;
     }
     if (e != NULL) {
-        mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR__msgpackc_ext), MP_MAP_LOOKUP_REMOVE_IF_FOUND);
+        mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR__ccbor_ext), MP_MAP_LOOKUP_REMOVE_IF_FOUND);
     }
-    mp_obj_t mod = mp_obj_new_module(MP_QSTR__msgpackc_ext);
+    mp_obj_t mod = mp_obj_new_module(MP_QSTR__ccbor_ext);
     mp_obj_t globals = MP_OBJ_FROM_PTR(mp_obj_module_get_globals(mod));
     mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_custom), mp_obj_new_dict(0));
     mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_builtins), mp_obj_new_dict(0));
@@ -177,7 +180,7 @@ static mp_obj_t ext_dict(mp_obj_t reg, qstr name) {
     mp_obj_t globals = MP_OBJ_FROM_PTR(mp_obj_module_get_globals(reg));
     mp_obj_t d = mp_obj_dict_get(globals, MP_OBJ_NEW_QSTR(name));
     if (!mp_obj_is_dict_or_ordereddict(d)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("_msgpackc_ext registry damaged"));
+        mp_raise_TypeError(MP_ERROR_TEXT("_ccbor_ext registry damaged"));
     }
     return d;
 }
@@ -232,10 +235,10 @@ enum {
 
 #if MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_DOUBLE
 #define FPREC_NATIVE FPREC_DOUBLE
-#define MSGPACKC_FLOAT_PRECISION MP_QSTR_double
+#define CCBOR_FLOAT_PRECISION MP_QSTR_double
 #else
 #define FPREC_NATIVE FPREC_SINGLE
-#define MSGPACKC_FLOAT_PRECISION MP_QSTR_single
+#define CCBOR_FLOAT_PRECISION MP_QSTR_single
 #endif
 
 typedef struct _packer_t {
@@ -428,7 +431,7 @@ static void pk_container_hdr(packer_t *p, size_t len, byte fix_base, byte tag16)
 
 static void pk_enter(packer_t *p) {
     MP_STACK_CHECK();
-    if (++p->depth > MSGPACKC_MAX_DEPTH) {
+    if (++p->depth > CCBOR_MAX_DEPTH) {
         raise_depth();
     }
 }
@@ -671,14 +674,14 @@ static void packer_init(packer_t *p, mp_map_t *kw) {
 }
 
 // dumps(obj, **options) -> bytes
-static mp_obj_t msgpackc_dumps(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
+static mp_obj_t ccbor_dumps(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
     mp_arg_check_num(n_args, kw->used, 1, 1, true);
     packer_t p;
     packer_init(&p, kw);
     pk_obj(&p, args[0]);
     return mp_obj_new_bytes_from_vstr(&p.vstr);
 }
-static MP_DEFINE_CONST_FUN_OBJ_KW(msgpackc_dumps_obj, 1, msgpackc_dumps);
+static MP_DEFINE_CONST_FUN_OBJ_KW(ccbor_dumps_obj, 1, ccbor_dumps);
 
 // Look up fp.<meth> into dest. If it is the generic C stream method, fp is a
 // native stream: return its protocol so data can be moved without method
@@ -694,7 +697,7 @@ static const mp_stream_p_t *native_stream(mp_obj_t fp, qstr meth, const void *ge
 }
 
 // dump(obj, fp, **options): pack, then write everything with a single write.
-static mp_obj_t msgpackc_dump(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
+static mp_obj_t ccbor_dump(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
     mp_arg_check_num(n_args, kw->used, 2, 2, true);
     packer_t p;
     packer_init(&p, kw);
@@ -718,7 +721,7 @@ static mp_obj_t msgpackc_dump(size_t n_args, const mp_obj_t *args, mp_map_t *kw)
     }
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_KW(msgpackc_dump_obj, 2, msgpackc_dump);
+static MP_DEFINE_CONST_FUN_OBJ_KW(ccbor_dump_obj, 2, ccbor_dump);
 
 /******************************************************************************/
 // Unpacking
@@ -859,10 +862,10 @@ static mp_obj_t up_str(unpacker_t *u, size_t n, bool key) {
         if (u->allow_invalid_utf8) {
             return up_new_bytes(u, s, n, &vstr);
         }
-        mp_raise_msg(&mp_type_msgpackc_InvalidStringException, MP_ERROR_TEXT("unpacked string is invalid utf-8"));
+        mp_raise_msg(&mp_type_ccbor_InvalidStringException, MP_ERROR_TEXT("unpacked string is invalid utf-8"));
     }
     #endif
-    #if MSGPACKC_REUSE_QSTR
+    #if CCBOR_REUSE_QSTR
     // A key that is an existing qstr: no allocation, and dict lookups compare
     // qstrs. New qstrs are never created from input data.
     qstr q = key ? qstr_find_strn((const char *)s, n) : MP_QSTRnull;
@@ -909,10 +912,10 @@ static mp_obj_t up_ext(unpacker_t *u, size_t n) {
     if (e == NULL) {
         // Same text as umsgpack's f"ext_type: 0x{ext_type:0X}"
         if (ext_type < 0) {
-            mp_raise_msg_varg(&mp_type_msgpackc_UnsupportedTypeException,
+            mp_raise_msg_varg(&mp_type_ccbor_UnsupportedTypeException,
                 MP_ERROR_TEXT("ext_type: 0x-%X"), (unsigned int)-ext_type);
         }
-        mp_raise_msg_varg(&mp_type_msgpackc_UnsupportedTypeException,
+        mp_raise_msg_varg(&mp_type_ccbor_UnsupportedTypeException,
             MP_ERROR_TEXT("ext_type: 0x%X"), (unsigned int)ext_type);
     }
     mp_obj_t cls = e->value;
@@ -930,7 +933,7 @@ static mp_obj_t up_ext(unpacker_t *u, size_t n) {
 
 static void up_enter(unpacker_t *u) {
     MP_STACK_CHECK();
-    if (++u->depth > MSGPACKC_MAX_DEPTH) {
+    if (++u->depth > CCBOR_MAX_DEPTH) {
         raise_depth();
     }
 }
@@ -1004,7 +1007,7 @@ static void up_check_hashable(unpacker_t *u, mp_obj_t k) {
         mp_unary_op(MP_UNARY_OP_HASH, k);
         nlr_pop();
     } else {
-        raise_with_obj(&mp_type_msgpackc_UnhashableKeyException, "\"", k, PRINT_STR, "\"");
+        raise_with_obj(&mp_type_ccbor_UnhashableKeyException, "\"", k, PRINT_STR, "\"");
     }
     up_revalidate(u);
 }
@@ -1044,7 +1047,7 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
             mp_print_str(&print, "\" (");
             mp_obj_print_helper(&print, MP_OBJ_FROM_PTR(mp_obj_get_type(k)), PRINT_STR);
             mp_print_str(&print, ")");
-            nlr_raise(mp_obj_new_exception_arg1(&mp_type_msgpackc_DuplicateKeyException,
+            nlr_raise(mp_obj_new_exception_arg1(&mp_type_ccbor_DuplicateKeyException,
                 mp_obj_new_str_from_vstr(&vstr)));
         }
         e->value = up_obj(u);
@@ -1100,7 +1103,7 @@ static mp_obj_t up_obj(unpacker_t *u) {
         case 0xc0:
             return mp_const_none;
         case 0xc1:
-            mp_raise_msg(&mp_type_msgpackc_ReservedCodeException, MP_ERROR_TEXT("got 0xc1"));
+            mp_raise_msg(&mp_type_ccbor_ReservedCodeException, MP_ERROR_TEXT("got 0xc1"));
         case 0xc2:
             return mp_const_false;
         case 0xc3:
@@ -1188,7 +1191,7 @@ static void unpacker_set_buffer(unpacker_t *u, mp_obj_t src, const byte *buf, si
 
 // loads(data, **options): data is bytes, bytearray or any other read buffer
 // except str. Trailing bytes after the first object are ignored (as umsgpack).
-static mp_obj_t msgpackc_loads(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
+static mp_obj_t ccbor_loads(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
     mp_arg_check_num(n_args, kw->used, 1, 1, true);
     mp_buffer_info_t bi;
     if (mp_obj_is_str(args[0]) || !mp_get_buffer(args[0], &bi, MP_BUFFER_READ)) {
@@ -1199,10 +1202,10 @@ static mp_obj_t msgpackc_loads(size_t n_args, const mp_obj_t *args, mp_map_t *kw
     unpacker_set_buffer(&u, args[0], bi.buf, bi.len);
     return up_obj(&u);
 }
-static MP_DEFINE_CONST_FUN_OBJ_KW(msgpackc_loads_obj, 1, msgpackc_loads);
+static MP_DEFINE_CONST_FUN_OBJ_KW(ccbor_loads_obj, 1, ccbor_loads);
 
 // load(fp, **options): reads exactly the bytes of one object from fp.
-static mp_obj_t msgpackc_load(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
+static mp_obj_t ccbor_load(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
     mp_arg_check_num(n_args, kw->used, 1, 1, true);
     unpacker_t u;
     unpacker_init(&u, kw);
@@ -1213,7 +1216,7 @@ static mp_obj_t msgpackc_load(size_t n_args, const mp_obj_t *args, mp_map_t *kw)
     }
     return up_obj(&u);
 }
-static MP_DEFINE_CONST_FUN_OBJ_KW(msgpackc_load_obj, 1, msgpackc_load);
+static MP_DEFINE_CONST_FUN_OBJ_KW(ccbor_load_obj, 1, ccbor_load);
 
 /******************************************************************************/
 // Unpacker: incremental decoding of a byte stream fed in arbitrary chunks.
@@ -1222,7 +1225,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(msgpackc_load_obj, 1, msgpackc_load);
 // Iterative and allocation free: it only walks the headers, counting the
 // items still expected, so deep nesting costs no stack. Returns SIZE_MAX for
 // the reserved code 0xc1.
-static size_t msgpack_measure(const byte *buf, size_t len) {
+static size_t ccbor_measure(const byte *buf, size_t len) {
     const byte *p = buf;
     const byte *end = buf + len;
     uint64_t pending = 1;
@@ -1399,12 +1402,12 @@ static size_t unpacker_next_size(mp_obj_unpacker_t *self) {
     if (pending == self->checked_len) {
         return 0; // nothing new since the last incomplete check
     }
-    size_t n = msgpack_measure((const byte *)self->buf.buf + self->pos, pending);
+    size_t n = ccbor_measure((const byte *)self->buf.buf + self->pos, pending);
     if (n == SIZE_MAX) {
         // Skip the bad byte so the stream can resynchronise.
         self->pos += 1;
         self->checked_len = SIZE_MAX;
-        mp_raise_msg(&mp_type_msgpackc_ReservedCodeException, MP_ERROR_TEXT("got 0xc1"));
+        mp_raise_msg(&mp_type_ccbor_ReservedCodeException, MP_ERROR_TEXT("got 0xc1"));
     }
     self->checked_len = n == 0 ? pending : SIZE_MAX;
     return n;
@@ -1488,7 +1491,7 @@ static const mp_rom_map_elem_t unpacker_locals_dict_table[] = {
 static MP_DEFINE_CONST_DICT(unpacker_locals_dict, unpacker_locals_dict_table);
 
 static MP_DEFINE_CONST_OBJ_TYPE(
-    msgpackc_unpacker_type,
+    ccbor_unpacker_type,
     MP_QSTR_Unpacker,
     MP_TYPE_FLAG_ITER_IS_ITERNEXT,
     make_new, unpacker_make_new,
@@ -1545,57 +1548,57 @@ static mp_obj_t ext_register(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ext_register_obj, 3, 3, ext_register);
 
-static mp_obj_t msgpackc_ext_serializable(size_t n_args, const mp_obj_t *args) {
+static mp_obj_t ccbor_ext_serializable(size_t n_args, const mp_obj_t *args) {
     mp_obj_t closed[2] = { args[0], n_args > 1 ? args[1] : mp_const_none };
     return mp_obj_new_closure(MP_OBJ_FROM_PTR(&ext_register_obj), 2, closed);
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(msgpackc_ext_serializable_obj, 1, 2, msgpackc_ext_serializable);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ccbor_ext_serializable_obj, 1, 2, ccbor_ext_serializable);
 
 /******************************************************************************/
 // Module
 
 // Module attributes that are not constants: the registry dicts (as umsgpack
-// exposes them) and ALoader, which is Python code in msgpackc_aio.py.
-static mp_obj_t msgpackc___getattr__(mp_obj_t attr) {
+// exposes them) and ALoader, which is Python code in ccbor_aio.py.
+static mp_obj_t ccbor___getattr__(mp_obj_t attr) {
     qstr name = mp_obj_str_get_qstr(attr);
     if (name == MP_QSTR_custom || name == MP_QSTR_builtins || name == MP_QSTR_packers) {
         return ext_dict(ext_registry(true), name);
     }
     if (name == MP_QSTR_ALoader) {
-        mp_obj_t mod = mp_import_name(MP_QSTR_msgpackc_aio, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
+        mp_obj_t mod = mp_import_name(MP_QSTR_ccbor_aio, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
         return mp_load_attr(mod, MP_QSTR_ALoader);
     }
     return MP_OBJ_NULL;
 }
-static MP_DEFINE_CONST_FUN_OBJ_1(msgpackc___getattr___obj, msgpackc___getattr__);
+static MP_DEFINE_CONST_FUN_OBJ_1(ccbor___getattr___obj, ccbor___getattr__);
 
-static MP_DEFINE_STR_OBJ(msgpackc_version_obj, "1.0.0");
+static MP_DEFINE_STR_OBJ(ccbor_version_obj, "2.0.0");
 
-static const mp_rom_map_elem_t msgpackc_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_msgpackc) },
-    { MP_ROM_QSTR(MP_QSTR___version__), MP_ROM_PTR(&msgpackc_version_obj) },
-    { MP_ROM_QSTR(MP_QSTR___getattr__), MP_ROM_PTR(&msgpackc___getattr___obj) },
-    { MP_ROM_QSTR(MP_QSTR_dumps), MP_ROM_PTR(&msgpackc_dumps_obj) },
-    { MP_ROM_QSTR(MP_QSTR_dump), MP_ROM_PTR(&msgpackc_dump_obj) },
-    { MP_ROM_QSTR(MP_QSTR_loads), MP_ROM_PTR(&msgpackc_loads_obj) },
-    { MP_ROM_QSTR(MP_QSTR_load), MP_ROM_PTR(&msgpackc_load_obj) },
-    { MP_ROM_QSTR(MP_QSTR_Unpacker), MP_ROM_PTR(&msgpackc_unpacker_type) },
-    { MP_ROM_QSTR(MP_QSTR_ext_serializable), MP_ROM_PTR(&msgpackc_ext_serializable_obj) },
-    { MP_ROM_QSTR(MP_QSTR_float_precision), MP_ROM_QSTR(MSGPACKC_FLOAT_PRECISION) },
-    { MP_ROM_QSTR(MP_QSTR_PackException), MP_ROM_PTR(&mp_type_msgpackc_PackException) },
-    { MP_ROM_QSTR(MP_QSTR_UnpackException), MP_ROM_PTR(&mp_type_msgpackc_UnpackException) },
-    { MP_ROM_QSTR(MP_QSTR_UnsupportedTypeException), MP_ROM_PTR(&mp_type_msgpackc_UnsupportedTypeException) },
-    { MP_ROM_QSTR(MP_QSTR_InsufficientDataException), MP_ROM_PTR(&mp_type_msgpackc_InsufficientDataException) },
-    { MP_ROM_QSTR(MP_QSTR_InvalidStringException), MP_ROM_PTR(&mp_type_msgpackc_InvalidStringException) },
-    { MP_ROM_QSTR(MP_QSTR_ReservedCodeException), MP_ROM_PTR(&mp_type_msgpackc_ReservedCodeException) },
-    { MP_ROM_QSTR(MP_QSTR_UnhashableKeyException), MP_ROM_PTR(&mp_type_msgpackc_UnhashableKeyException) },
-    { MP_ROM_QSTR(MP_QSTR_DuplicateKeyException), MP_ROM_PTR(&mp_type_msgpackc_DuplicateKeyException) },
+static const mp_rom_map_elem_t ccbor_module_globals_table[] = {
+    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_ccbor) },
+    { MP_ROM_QSTR(MP_QSTR___version__), MP_ROM_PTR(&ccbor_version_obj) },
+    { MP_ROM_QSTR(MP_QSTR___getattr__), MP_ROM_PTR(&ccbor___getattr___obj) },
+    { MP_ROM_QSTR(MP_QSTR_dumps), MP_ROM_PTR(&ccbor_dumps_obj) },
+    { MP_ROM_QSTR(MP_QSTR_dump), MP_ROM_PTR(&ccbor_dump_obj) },
+    { MP_ROM_QSTR(MP_QSTR_loads), MP_ROM_PTR(&ccbor_loads_obj) },
+    { MP_ROM_QSTR(MP_QSTR_load), MP_ROM_PTR(&ccbor_load_obj) },
+    { MP_ROM_QSTR(MP_QSTR_Unpacker), MP_ROM_PTR(&ccbor_unpacker_type) },
+    { MP_ROM_QSTR(MP_QSTR_ext_serializable), MP_ROM_PTR(&ccbor_ext_serializable_obj) },
+    { MP_ROM_QSTR(MP_QSTR_float_precision), MP_ROM_QSTR(CCBOR_FLOAT_PRECISION) },
+    { MP_ROM_QSTR(MP_QSTR_PackException), MP_ROM_PTR(&mp_type_ccbor_PackException) },
+    { MP_ROM_QSTR(MP_QSTR_UnpackException), MP_ROM_PTR(&mp_type_ccbor_UnpackException) },
+    { MP_ROM_QSTR(MP_QSTR_UnsupportedTypeException), MP_ROM_PTR(&mp_type_ccbor_UnsupportedTypeException) },
+    { MP_ROM_QSTR(MP_QSTR_InsufficientDataException), MP_ROM_PTR(&mp_type_ccbor_InsufficientDataException) },
+    { MP_ROM_QSTR(MP_QSTR_InvalidStringException), MP_ROM_PTR(&mp_type_ccbor_InvalidStringException) },
+    { MP_ROM_QSTR(MP_QSTR_ReservedCodeException), MP_ROM_PTR(&mp_type_ccbor_ReservedCodeException) },
+    { MP_ROM_QSTR(MP_QSTR_UnhashableKeyException), MP_ROM_PTR(&mp_type_ccbor_UnhashableKeyException) },
+    { MP_ROM_QSTR(MP_QSTR_DuplicateKeyException), MP_ROM_PTR(&mp_type_ccbor_DuplicateKeyException) },
 };
-static MP_DEFINE_CONST_DICT(msgpackc_module_globals, msgpackc_module_globals_table);
+static MP_DEFINE_CONST_DICT(ccbor_module_globals, ccbor_module_globals_table);
 
-const mp_obj_module_t mp_module_msgpackc = {
+const mp_obj_module_t mp_module_ccbor = {
     .base = { &mp_type_module },
-    .globals = (mp_obj_dict_t *)&msgpackc_module_globals,
+    .globals = (mp_obj_dict_t *)&ccbor_module_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_msgpackc, mp_module_msgpackc);
+MP_REGISTER_MODULE(MP_QSTR_ccbor, mp_module_ccbor);

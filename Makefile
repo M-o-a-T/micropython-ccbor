@@ -1,4 +1,4 @@
-# msgpackc: MessagePack for MicroPython, in C.
+# ccbor: CBOR for MicroPython, in C.
 #
 # Run `make help` for the list of targets. Everything is built under build/,
 # and the ESP-IDF lives in tools/ (both ignored by git).
@@ -21,14 +21,14 @@ fw_dir = build/$(shell echo $(BOARD) | tr 'A-Z_' 'a-z-')$(if $(VARIANT),-$(shell
         format lint clean
 
 help:
-	@echo "msgpackc - MessagePack for MicroPython, in C"
+	@echo "ccbor - the binary format for MicroPython, in C"
 	@echo
 	@echo "First time:"
 	@echo "  make setup                 submodules, host Python tools, mpy-cross"
 	@echo "  make esp-idf               ESP-IDF v5.5.2 + toolchains, inside tools/ (for the boards)"
 	@echo
 	@echo "Unix port (your computer):"
-	@echo "  make unix                  build/unix-standard/micropython with msgpackc"
+	@echo "  make unix                  build/unix-standard/micropython with ccbor"
 	@echo "  make test                  all host tests (suite, differential, fuzz, interop...)"
 	@echo "  make test-quick            the same, smaller"
 	@echo "  make test-sanitize         tests on an AddressSanitizer + UBSan build"
@@ -36,9 +36,9 @@ help:
 	@echo "  make bench-unix            benchmark on the unix port"
 	@echo
 	@echo "Boards (BOARD=$(BOARD) VARIANT=$(VARIANT) PORT=$(PORT)):"
-	@echo "  make firmware              standard firmware with msgpackc"
+	@echo "  make firmware              standard firmware with ccbor"
 	@echo "  make deploy PORT=...       erase the board and write that firmware"
-	@echo "  make firmware-test         test firmware (RAM filesystem, umsgpack frozen in)"
+	@echo "  make firmware-test         test firmware (RAM filesystem)"
 	@echo "  make flash-app PORT=...    write only the test firmware application"
 	@echo "  make test-device PORT=...  all tests on the board"
 	@echo "  make bench-board PORT=...  benchmark on the board"
@@ -46,13 +46,13 @@ help:
 	@echo "  make format / make lint    MicroPython code style (uncrustify, ruff)"
 
 setup:
-	git submodule update --init micropython third_party/micropython-msgpack third_party/msgpack-test-suite
+	git submodule update --init micropython third_party/micropython-msgpack third_party/cbor-test-vectors
 	$(MAKE) -C micropython/ports/unix submodules
 	$(MAKE) -C micropython/mpy-cross -j8
 ifdef UV
 	uv sync
 else
-	python3 -m venv .venv && .venv/bin/pip install -q msgpack pytest mpremote pyserial \
+	python3 -m venv .venv && .venv/bin/pip install -q cbor2 pytest mpremote pyserial \
 	    micropython-uncrustify==1.0.0.post1 ruff==0.11.6
 endif
 
@@ -87,12 +87,12 @@ test: unix-all
 	$(PY) -m pytest
 
 test-quick: unix-all
-	MSGPACKC_QUICK=1 $(PY) -m pytest
+	CCBOR_QUICK=1 $(PY) -m pytest
 
 test-sanitize:
 	tools/build-unix.sh sanitize
 	ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-	  MSGPACKC_FLAVOURS=sanitize $(PY) -m pytest
+	  CCBOR_FLAVOURS=sanitize $(PY) -m pytest
 
 coverage:
 	tools/coverage.sh
@@ -109,11 +109,11 @@ bench-board:
 	$(PY) tools/bench.py run --port $(PORT) --label $(shell echo $(BOARD) | tr 'A-Z_' 'a-z-')$(if $(VARIANT),-$(shell echo $(VARIANT) | tr 'A-Z_' 'a-z-'))
 
 format:
-	.venv/bin/uncrustify -c micropython/tools/uncrustify.cfg -lC --no-backup -q cmodules/msgpackc/*.c
+	.venv/bin/uncrustify -c micropython/tools/uncrustify.cfg -lC --no-backup -q cmodules/ccbor/*.c
 	.venv/bin/ruff format .
 
 lint:
-	.venv/bin/uncrustify -c micropython/tools/uncrustify.cfg -lC --check -q cmodules/msgpackc/*.c
+	.venv/bin/uncrustify -c micropython/tools/uncrustify.cfg -lC --check -q cmodules/ccbor/*.c
 	.venv/bin/ruff format --check .
 	.venv/bin/ruff check .
 

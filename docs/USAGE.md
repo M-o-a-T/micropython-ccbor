@@ -1,10 +1,10 @@
-# Using msgpackc
+# Using ccbor
 
-`msgpackc` is a [MessagePack](https://msgpack.org) serializer for MicroPython,
+`ccbor` is a [MessagePack](https://msgpack.org) serializer for MicroPython,
 written in C. Its API is the one of Peter Hinch's
-[umsgpack](https://github.com/peterhinch/micropython-msgpack), which is itself
+[ccbor-ref](https://github.com/peterhinch/micropython-msgpack), which is itself
 the API of the `json` module: if you know one of them, you already know
-`msgpackc`.
+`ccbor`.
 
 - [1. Quick tour](#1-quick-tour)
 - [2. Supported types](#2-supported-types)
@@ -14,20 +14,20 @@ the API of the `json` module: if you know one of them, you already know
 - [6. Extension types](#6-extension-types)
 - [7. Streams and incremental decoding](#7-streams-and-incremental-decoding)
 - [8. Asynchronous decoding (ALoader)](#8-asynchronous-decoding-aloader)
-- [9. Moving from umsgpack](#9-moving-from-umsgpack)
-- [10. Differences from umsgpack](#10-differences-from-umsgpack)
+- [9. Moving from ccbor-ref](#9-moving-from-ccbor-ref)
+- [10. Differences from ccbor-ref](#10-differences-from-ccbor-ref)
 - [11. Limits and safety](#11-limits-and-safety)
 - [12. Build-time configuration](#12-build-time-configuration)
 
 ## 1. Quick tour
 
 ```python
-import msgpackc
+import ccbor
 
-data = msgpackc.dumps({"id": "sensor-01", "temp": 21.5, "ok": True, "raw": b"\x01\x02"})
+data = ccbor.dumps({"id": "sensor-01", "temp": 21.5, "ok": True, "raw": b"\x01\x02"})
 print(len(data))                # 36 bytes on a board (40 where floats are doubles)
                                 # the same record in JSON takes 60
-obj = msgpackc.loads(data)      # {'id': 'sensor-01', 'temp': 21.5, ...}
+obj = ccbor.loads(data)      # {'id': 'sensor-01', 'temp': 21.5, ...}
 ```
 
 Send `data` over MQTT, UART, a socket or store it in a file: it is plain
@@ -55,71 +55,71 @@ Any other object (a `set`, a `complex`, your own class...) raises
 
 ## 3. Functions
 
-### `msgpackc.dumps(obj, **options) -> bytes`
+### `ccbor.dumps(obj, **options) -> bytes`
 
 Pack `obj` and return the bytes.
 
-### `msgpackc.dump(obj, fp, **options)`
+### `ccbor.dump(obj, fp, **options)`
 
 Pack `obj` and write it to `fp`: any stream (a file, `io.BytesIO`, a socket,
 a UART) or any object with a `write(data)` method. The whole object is
 written with a single `write()`: if packing fails, nothing is written.
 
-### `msgpackc.loads(data, **options) -> object`
+### `ccbor.loads(data, **options) -> object`
 
 Unpack one object from `data`: `bytes`, `bytearray` or `memoryview` (a
 `memoryview` avoids copying part of a larger buffer). Bytes after the end of
 the first object are ignored.
 
-### `msgpackc.load(fp, **options) -> object`
+### `ccbor.load(fp, **options) -> object`
 
 Unpack one object from `fp`: any stream, or any object with a `read(n)`
 method. It reads exactly the bytes of one object, so you can call it again to
 read the next one:
 
 ```python
-import io, msgpackc
+import io, ccbor
 
 f = io.BytesIO()
 for reading in ({"t": 20.5}, {"t": 20.7}, {"t": 21.0}):
-    msgpackc.dump(reading, f)
+    ccbor.dump(reading, f)
 f.seek(0)
-print(msgpackc.load(f), msgpackc.load(f), msgpackc.load(f))
+print(ccbor.load(f), ccbor.load(f), ccbor.load(f))
 ```
 
-### `msgpackc.Unpacker(**options)`
+### `ccbor.Unpacker(**options)`
 
 Incremental decoder for data that arrives in pieces: see
 [section 7](#7-streams-and-incremental-decoding).
 
-### `msgpackc.ext_serializable(ext_type, example=None)`
+### `ccbor.ext_serializable(ext_type, example=None)`
 
 Class decorator that registers an extension type: see
 [section 6](#6-extension-types).
 
-### `msgpackc.ALoader(stream, **options)`
+### `ccbor.ALoader(stream, **options)`
 
 Asynchronous decoder for an `asyncio.StreamReader`: see
 [section 8](#8-asynchronous-decoding-aloader).
 
 ### Constants
 
-- `msgpackc.float_precision`: `"single"` or `"double"`, the precision of the
+- `ccbor.float_precision`: `"single"` or `"double"`, the precision of the
   floats of this MicroPython build (most boards: `"single"`).
-- `msgpackc.__version__`: the version of the module, e.g. `"1.0.0"`.
-- `msgpackc.custom`, `msgpackc.builtins`, `msgpackc.packers`: the registered
-  extension types (as in umsgpack; for inspection).
+- `ccbor.__version__`: the version of the module, e.g. `"1.0.0"`.
+- `ccbor.custom`, `ccbor.builtins`, `ccbor.packers`: the registered
+  extension types (as in ccbor-ref; for inspection).
 
 ## 4. Options
 
 Options are keyword arguments. Unknown options are accepted and passed on to
-the extension types (as umsgpack does).
+the extension types (as ccbor-ref does).
 
 ### Pack options (`dumps`, `dump`)
 
 | option | values | default |
 |---|---|---|
-| `force_float_precision` | `"single"`: floats as float 32 (5 bytes); `"double"`: as float 64 (9 bytes) | `msgpackc.float_precision` |
+| `force_float_precision` | `"single"`: floats as float 32 (5 bytes); `"double"`: as float 64 (9 bytes) | `ccbor.float_precision` |
 
 On a board with single precision floats there is nothing to gain from
 `"double"`. On a computer, `"single"` saves 4 bytes per float.
@@ -137,7 +137,7 @@ On a board with single precision floats there is nothing to gain from
 
 ## 5. Exceptions
 
-The same classes as umsgpack, available as `msgpackc.<name>`:
+The same classes as ccbor-ref, available as `ccbor.<name>`:
 
 ```
 Exception
@@ -158,12 +158,12 @@ Other exceptions you may see: `TypeError` (wrong argument types),
 extension type while it is being packed), `OSError` (stream errors) and
 `NotImplementedError` (an extension class without `packb`/`unpackb`).
 
-Catch `msgpackc.UnpackException` to handle all errors caused by bad data:
+Catch `ccbor.UnpackException` to handle all errors caused by bad data:
 
 ```python
 try:
-    msg = msgpackc.loads(payload)
-except msgpackc.UnpackException as e:
+    msg = ccbor.loads(payload)
+except ccbor.UnpackException as e:
     print("corrupt message:", repr(e))
 ```
 
@@ -180,9 +180,9 @@ method returning `bytes` and a static `unpackb(data, options)` method:
 
 ```python
 import struct
-import msgpackc
+import ccbor
 
-@msgpackc.ext_serializable(0x10)
+@ccbor.ext_serializable(0x10)
 class Point3d:
     def __init__(self, x, y, z):
         self.v = (float(x), float(y), float(z))
@@ -194,8 +194,8 @@ class Point3d:
     def unpackb(data, options):
         return Point3d(*struct.unpack(">fff", data))
 
-data = msgpackc.dumps([Point3d(1, 2, 3), "label"])
-print(msgpackc.loads(data))     # [<Point3d object at ...>, 'label']
+data = ccbor.dumps([Point3d(1, 2, 3), "label"])
+print(ccbor.loads(data))     # [<Point3d object at ...>, 'label']
 ```
 
 Subclasses of a registered class are packed with its type number.
@@ -206,23 +206,23 @@ Give the type as second argument; `packb` is then a static method that
 receives the object and the pack options:
 
 ```python
-@msgpackc.ext_serializable(0x51, set)
+@ccbor.ext_serializable(0x51, set)
 class Set:
     @staticmethod
     def packb(obj, options):
-        return msgpackc.dumps(list(obj))
+        return ccbor.dumps(list(obj))
 
     @staticmethod
     def unpackb(data, options):
-        return set(msgpackc.loads(data))
+        return set(ccbor.loads(data))
 
-print(msgpackc.loads(msgpackc.dumps({1, 2, 3})))   # {1, 2, 3}
+print(ccbor.loads(ccbor.dumps({1, 2, 3})))   # {1, 2, 3}
 ```
 
 A registered built-in type has priority over the native encoding, so you can
 for example make tuples come back as tuples (register `tuple`).
 
-The numbers 0x50 to 0x5F are used by umsgpack's extension modules
+The numbers 0x50 to 0x5F are used by ccbor-ref's extension modules
 (`complex` 0x50, `set` 0x51, `tuple` 0x52, `bytearray` 0x53, `OrderedDict`
 0x54): use the same numbers to stay compatible with them.
 
@@ -235,11 +235,11 @@ whole messages per read. `Unpacker` buffers what you feed it and returns the
 objects as soon as they are complete:
 
 ```python
-import msgpackc
+import ccbor
 from machine import UART
 
 uart = UART(1, 115200)
-unpacker = msgpackc.Unpacker(max_buffer_size=4096)
+unpacker = ccbor.Unpacker(max_buffer_size=4096)
 
 while True:
     data = uart.read()
@@ -271,12 +271,12 @@ while True:
 
 ```python
 import asyncio
-import msgpackc
+import ccbor
 from machine import UART
 
 async def receiver():
     uart = UART(1, 115200)
-    async for msg in msgpackc.ALoader(asyncio.StreamReader(uart)):
+    async for msg in ccbor.ALoader(asyncio.StreamReader(uart)):
         print("received", msg)
 
 asyncio.run(receiver())
@@ -287,37 +287,37 @@ asyncio.run(receiver())
   stream ends inside an object (then `EOFError` is raised).
 - `observer=callable`: called with the raw bytes of each object, then with
   `b""`, before the object is returned (for example to compute a CRC).
-- ALoader is Python code (`python/msgpackc_aio.py`), imported on first use
-  of `msgpackc.ALoader`. The firmware built by this project includes it. If
-  you build your own firmware, freeze `python/msgpackc_aio.py` or copy it to
+- ALoader is Python code (`python/ccbor_aio.py`), imported on first use
+  of `ccbor.ALoader`. The firmware built by this project includes it. If
+  you build your own firmware, freeze `python/ccbor_aio.py` or copy it to
   the board (see [INSTALL.md](INSTALL.md#7-the-python-helpers)).
 
-Packing needs nothing special: `writer.write(msgpackc.dumps(obj))`, then
+Packing needs nothing special: `writer.write(ccbor.dumps(obj))`, then
 `await writer.drain()`.
 
-## 9. Moving from umsgpack
+## 9. Moving from ccbor-ref
 
-`msgpackc` has the same functions, options, exceptions, decorator and output
-bytes as umsgpack. Two ways to switch:
+`ccbor` has the same functions, options, exceptions, decorator and output
+bytes as ccbor-ref. Two ways to switch:
 
-1. Change the import: `import msgpackc as umsgpack`.
-2. Keep `import umsgpack` everywhere: copy the compatibility package
-   `python/umsgpack/` to the board (`/lib/umsgpack/__init__.py`). It forwards
-   everything to `msgpackc`. umsgpack's extension modules (`mpk_complex.py`,
+1. Change the import: `import ccbor as ccbor-ref`.
+2. Keep `import ccbor-ref` everywhere: copy the compatibility package
+   `python/ccbor-ref/` to the board (`/lib/ccbor-ref/__init__.py`). It forwards
+   everything to `ccbor`. ccbor-ref's extension modules (`mpk_complex.py`,
    `mpk_set.py`, `mpk_tuple.py`, `mpk_bytearray.py`, `mpk_odict.py`) work
    unchanged: copy the ones you use from
-   [umsgpack's repository](https://github.com/peterhinch/micropython-msgpack/tree/master/umsgpack)
+   [ccbor-ref's repository](https://github.com/peterhinch/micropython-msgpack/tree/master/ccbor-ref)
    into the same directory.
 
 Data packed by one module unpacks with the other: the formats are the same.
 
-## 10. Differences from umsgpack
+## 10. Differences from ccbor-ref
 
 Measured by the differential test, which runs both modules on the same random
 objects and data (see [TESTING.md](TESTING.md)). Everything not listed here
 gives the same bytes, the same objects or the same exception and message.
 
-| | umsgpack | msgpackc |
+| | ccbor-ref | ccbor |
 |---|---|---|
 | corrupt length (e.g. a str "of 3 GB" in 10 bytes) | `MemoryError` (allocates the length first), or `OverflowError` on 32-bit ports | `InsufficientDataException` |
 | `str` subclass | `TypeError` on MicroPython | packed as its `str` value |
@@ -331,7 +331,7 @@ gives the same bytes, the same objects or the same exception and message.
 
 ## 11. Limits and safety
 
-`msgpackc` is meant to decode data from the network, so bad data must never
+`ccbor` is meant to decode data from the network, so bad data must never
 crash the board:
 
 - every length read from the data is checked against the data available
@@ -350,15 +350,15 @@ UndefinedBehaviorSanitizer build.
 
 | macro | default | |
 |---|---|---|
-| `MSGPACKC_MAX_DEPTH` | 32 | maximum nesting of arrays and maps |
-| `MSGPACKC_REUSE_QSTR` | 1 | 1: a map key that already exists as a qstr is reused instead of copied; 0: always copy |
+| `CCBOR_MAX_DEPTH` | 32 | maximum nesting of arrays and maps |
+| `CCBOR_REUSE_QSTR` | 1 | 1: a map key that already exists as a qstr is reused instead of copied; 0: always copy |
 
-About `MSGPACKC_REUSE_QSTR`: the keys of the messages an application handles
+About `CCBOR_REUSE_QSTR`: the keys of the messages an application handles
 are usually written in its code as literals (`msg["temp"]`), so they exist as
 qstrs, and reusing them saves an allocation per key. Only map keys are looked
 up: other strings rarely are qstrs, and a lookup that fails costs more than
 the copy.
 
 Set it in your board's `mpconfigboard.h`, or in the compiler flags
-(`CFLAGS_EXTRA=-DMSGPACKC_MAX_DEPTH=64` for the unix port). Each level takes
+(`CFLAGS_EXTRA=-DCCBOR_MAX_DEPTH=64` for the unix port). Each level takes
 80 to 128 bytes of C stack on an ESP32; the MicroPython task has 16 KiB.

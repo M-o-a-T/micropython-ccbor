@@ -1,4 +1,4 @@
-# Differential test: msgpackc (C) against Peter Hinch's umsgpack (Python).
+# Differential test: ccbor (C) against the pure-Python reference (Python).
 #
 # Runs under MicroPython (unix port or a board) with both modules importable.
 # Random objects are packed by both modules and must give the same bytes or
@@ -6,7 +6,12 @@
 # byte strings are unpacked by both and must give equal objects or the same
 # exception. The PRNG is seeded, so a run is reproducible.
 #
-#   micropython diff_umsgpack.py [quick] [seed=N]
+#   micropython diff_ccbor.py [quick] [seed=N]
+#
+# Transitional: until phase 5 provides the in-repo CBOR reference codec, this
+# still runs against umsgpack (third_party/micropython-msgpack) and both sides
+# speak MessagePack. Phase 2 (the CBOR packer) switches this test off; phase 5
+# turns it back on against refcbor.
 #
 # Last line: "RESULT: OK <n> checks" or "RESULT: FAIL <n> mismatches".
 
@@ -14,8 +19,8 @@ import io
 import struct
 import sys
 
-import msgpackc
-import umsgpack  # the reference: Peter Hinch's pure-Python module
+import ccbor
+import umsgpack as refcbor  # transitional reference (see header)
 
 try:
     from collections import OrderedDict, namedtuple
@@ -39,15 +44,15 @@ BIG = not QUICK  # strings and containers with 16/32-bit length headers
 
 checks = 0
 fails = 0
-# umsgpack reads a declared length with fp.read(n), which allocates n bytes
+# refcbor reads a declared length with fp.read(n), which allocates n bytes
 # before finding out the data is not there: corrupt input gives MemoryError,
-# or OverflowError on 32-bit ports when the length exceeds 2**31. msgpackc
+# or OverflowError on 32-bit ports when the length exceeds 2**31. ccbor
 # checks the data available first and raises InsufficientDataException.
 # Counted, not reported.
 improved = 0
 AVOIDED = ("MemoryError", "OverflowError")
-# On 32-bit ports umsgpack's range(n) overflows before reading the items, where
-# msgpackc reads them and reports the first real error in the data.
+# On 32-bit ports refcbor's range(n) overflows before reading the items, where
+# ccbor reads them and reports the first real error in the data.
 UNPACK_ERRORS = (
     "InsufficientDataException",
     "InvalidStringException",
@@ -56,7 +61,7 @@ UNPACK_ERRORS = (
     "DuplicateKeyException",
     "UnsupportedTypeException",
 )
-kinds = {}  # mismatch summary: (operation, msgpackc result, umsgpack result) -> count
+kinds = {}  # mismatch summary: (operation, ccbor result, refcbor result) -> count
 
 
 def report(kind, inp, a, b):
@@ -67,8 +72,8 @@ def report(kind, inp, a, b):
     if fails <= 10:
         print("MISMATCH", kind)
         print("  input:   ", repr(inp)[:300])
-        print("  msgpackc:", repr(a)[:300])
-        print("  umsgpack:", repr(b)[:300])
+        print("  ccbor:", repr(a)[:300])
+        print("  refcbor:", repr(b)[:300])
 
 
 def no_addr(msg):
@@ -98,7 +103,7 @@ def same(a, b):
         and a[1] in ("UnhashableKeyException", "DuplicateKeyException")
     ):
         # The message shows the key: when it is a dict its item order may
-        # differ (msgpackc presizes dicts, so their hash tables differ).
+        # differ (ccbor presizes dicts, so their hash tables differ).
         return sorted(no_addr(a[2])) == sorted(no_addr(b[2]))
     return a[0] == b[0] and a == b
 
@@ -309,8 +314,8 @@ PACK_OPTS = [{}, {}, {"force_float_precision": "single"}, {"force_float_precisio
 
 def check_pack(obj, opts):
     global checks
-    a = outcome(msgpackc.dumps, obj, **opts)
-    b = outcome(umsgpack.dumps, obj, **opts)
+    a = outcome(ccbor.dumps, obj, **opts)
+    b = outcome(refcbor.dumps, obj, **opts)
     checks += 1
     if not same(a, b):
         report("dumps %r" % opts, obj, a, b)
@@ -320,8 +325,8 @@ def check_pack(obj, opts):
 def check_dump(obj):
     global checks
     fa, fb = io.BytesIO(), io.BytesIO()
-    a = outcome(msgpackc.dump, obj, fa)
-    b = outcome(umsgpack.dump, obj, fb)
+    a = outcome(ccbor.dump, obj, fa)
+    b = outcome(refcbor.dump, obj, fb)
     checks += 1
     if a[0] != b[0] or (a[0] == "ok" and fa.getvalue() != fb.getvalue()) or a[1:] != b[1:]:
         report("dump", obj, (a, fa.getvalue()), (b, fb.getvalue()))
@@ -335,13 +340,13 @@ LOAD_OPTS = [{}, {"use_tuple": True}, {"use_ordered_dict": True}, {"allow_invali
 def check_unpack(data):
     global checks
     opts = random.choice(LOAD_OPTS)
-    a = canon_outcome(outcome(msgpackc.loads, data, **opts))
-    b = canon_outcome(outcome(umsgpack.loads, data, **opts))
+    a = canon_outcome(outcome(ccbor.loads, data, **opts))
+    b = canon_outcome(outcome(refcbor.loads, data, **opts))
     checks += 1
     if not same(a, b):
         report("loads %r" % opts, data, a, b)
     if random.getrandbits(3) == 0:
-        a = canon_outcome(outcome(msgpackc.load, io.BytesIO(data), **opts))
+        a = canon_outcome(outcome(ccbor.load, io.BytesIO(data), **opts))
         checks += 1
         if not same(a, b):
             report("load %r" % opts, data, a, b)
@@ -386,18 +391,18 @@ def run_phase(ext):
 
 
 def check_str_subclass():
-    # umsgpack cannot pack str subclasses on MicroPython (bytes(sub, "utf-8")
-    # raises TypeError there); msgpackc packs them as their str value.
+    # refcbor cannot pack str subclasses on MicroPython (bytes(sub, "utf-8")
+    # raises TypeError there); ccbor packs them as their str value.
     global checks
     for _ in range(N_PACK // 20):
         s = rstr()
         checks += 1
-        if msgpackc.dumps(MyStr(s)) != umsgpack.dumps(s):
-            report("dumps str subclass", s, msgpackc.dumps(MyStr(s)), umsgpack.dumps(s))
+        if ccbor.dumps(MyStr(s)) != refcbor.dumps(s):
+            report("dumps str subclass", s, ccbor.dumps(MyStr(s)), refcbor.dumps(s))
 
 
 def register_ext():
-    for mod in (msgpackc, umsgpack):
+    for mod in (ccbor, refcbor):
         mod.ext_serializable(0x10)(Point)
 
         @mod.ext_serializable(0x50, complex)
@@ -427,8 +432,8 @@ def register_ext():
 def check_registration_errors():
     global checks
     for args in ((0x10,), (200,), (-129,), ("x",)):
-        a = outcome(lambda: msgpackc.ext_serializable(*args)(type("A", (), {})))
-        b = outcome(lambda: umsgpack.ext_serializable(*args)(type("A", (), {})))
+        a = outcome(lambda: ccbor.ext_serializable(*args)(type("A", (), {})))
+        b = outcome(lambda: refcbor.ext_serializable(*args)(type("A", (), {})))
         checks += 1
         if a[0] != b[0] or a[1] != b[1]:
             report("ext_serializable %r" % (args,), args, a, b)
@@ -442,7 +447,7 @@ run_phase(True)
 
 if fails:
     for k, n in kinds.items():
-        print("  %5d x %s: msgpackc %s, umsgpack %s" % (n, k[0], k[1], k[2]))
+        print("  %5d x %s: ccbor %s, refcbor %s" % (n, k[0], k[1], k[2]))
     print("RESULT: FAIL", fails, "mismatches in", checks, "checks")
 else:
     print("RESULT: OK", checks, "checks (%d MemoryError/OverflowError avoided)" % improved)

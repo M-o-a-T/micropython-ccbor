@@ -1,13 +1,13 @@
 [project]
-name = "upmsgpackc"
+name = "uccbor"
 version = "1.0.0"
-description = "Host-side tooling (tests, benchmarks, formatting) for the msgpackc MicroPython C module"
+description = "Host-side tooling (tests, benchmarks, formatting) for the ccbor MicroPython C module"
 requires-python = ">=3.10"
 dependencies = []
 
 [dependency-groups]
 dev = [
-    "msgpack>=1.1",          # reference implementation for interoperability tests
+    "msgpack>=1.1",          # reference implementation for interoperability tests (CBOR: cbor2, phase 5)
     "pytest>=8",
     "mpremote>=1.26",        # run code on the boards
     "pyserial>=3.5",

@@ -12,7 +12,7 @@
    "dumps_us": 43.355712,
    "loads_us": 8.646454,
    "payload": "int",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 1
   },
   {
@@ -21,7 +21,7 @@
    "dumps_us": 524.9453,
    "loads_us": 298.38574,
    "payload": "int",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 1
   },
   {
@@ -39,7 +39,7 @@
    "dumps_us": 97.67871,
    "loads_us": 197.88526,
    "payload": "telemetry",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 51
   },
   {
@@ -48,7 +48,7 @@
    "dumps_us": 7087.4684,
    "loads_us": 4642.1564,
    "payload": "telemetry",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 51
   },
   {
@@ -66,7 +66,7 @@
    "dumps_us": 1204.4024,
    "loads_us": 3833.406,
    "payload": "telemetry x20",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 1023
   },
   {
@@ -75,7 +75,7 @@
    "dumps_us": 147757.0,
    "loads_us": 97049.25,
    "payload": "telemetry x20",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 1023
   },
   {
@@ -93,7 +93,7 @@
    "dumps_us": 408.64648,
    "loads_us": 792.73048,
    "payload": "config",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 336
   },
   {
@@ -102,7 +102,7 @@
    "dumps_us": 49402.25,
    "loads_us": 34816.25,
    "payload": "config",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 336
   },
   {
@@ -120,7 +120,7 @@
    "dumps_us": 360.52636,
    "loads_us": 273.3916,
    "payload": "int list x100",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 343
   },
   {
@@ -129,7 +129,7 @@
    "dumps_us": 47830.0,
    "loads_us": 47410.0,
    "payload": "int list x100",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 343
   },
   {
@@ -147,7 +147,7 @@
    "dumps_us": 442.94728,
    "loads_us": 476.27344,
    "payload": "float list x100",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 503
   },
   {
@@ -156,7 +156,7 @@
    "dumps_us": 49477.5,
    "loads_us": 32534.25,
    "payload": "float list x100",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 503
   },
   {
@@ -174,7 +174,7 @@
    "dumps_us": 388.99512,
    "loads_us": 478.6797,
    "payload": "str list x50",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 393
   },
   {
@@ -183,7 +183,7 @@
    "dumps_us": 25212.75,
    "loads_us": 17951.688,
    "payload": "str list x50",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 393
   },
   {
@@ -201,7 +201,7 @@
    "dumps_us": 647.21092,
    "loads_us": 6333.5,
    "payload": "map x100",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 603
   },
   {
@@ -210,7 +210,7 @@
    "dumps_us": 93107.75,
    "loads_us": 67563.0,
    "payload": "map x100",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 603
   },
   {
@@ -228,7 +228,7 @@
    "dumps_us": 385.52636,
    "loads_us": 332.14258,
    "payload": "bytes 1 KiB",
-   "lib": "msgpackc",
+   "lib": "ccbor",
    "size": 1027
   },
   {
@@ -237,7 +237,7 @@
    "dumps_us": 1116.1836,
    "loads_us": 723.1719,
    "payload": "bytes 1 KiB",
-   "lib": "umsgpack",
+   "lib": "ccbor-ref",
    "size": 1027
   }
  ]

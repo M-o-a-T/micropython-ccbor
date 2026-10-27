@@ -1,7 +1,6 @@
 {
   "urls": [
-    ["msgpackc_aio.py", "github:Tangerino/micropython-msgpackc/python/msgpackc_aio.py"],
-    ["umsgpack/__init__.py", "github:Tangerino/micropython-msgpackc/python/umsgpack/__init__.py"]
+    ["ccbor_aio.py", "github:M-o-a-T/micropython-ccbor/python/ccbor_aio.py"]
   ],
-  "version": "1.0.0"
+  "version": "2.0.0"
 }

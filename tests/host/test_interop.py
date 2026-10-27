@@ -14,14 +14,14 @@ from conftest import run_mp
 # reading very long lines is slow on MicroPython.
 SCRIPT = """
 import sys
-import msgpackc
+import ccbor
 with open(sys.argv[1], "rb") as f, open(sys.argv[2], "wb") as out:
     while True:
         n = f.read(4)
         if not n:
             break
-        obj = msgpackc.loads(f.read(int.from_bytes(n, "big")))
-        data = msgpackc.dumps(obj)
+        obj = ccbor.loads(f.read(int.from_bytes(n, "big")))
+        data = ccbor.dumps(obj)
         out.write(len(data).to_bytes(4, "big"))
         out.write(data)
 """
@@ -83,7 +83,7 @@ def same(a, b):
 @pytest.mark.parametrize("seed", [1, 2, 3])
 def test_cpython_msgpack_round_trip(bigint_flavour, quick, seed, tmp_path):
     flavour = bigint_flavour
-    """CPython packs, msgpackc unpacks and packs again, CPython unpacks."""
+    """CPython packs, ccbor unpacks and packs again, CPython unpacks."""
     single = flavour == "float32"
     rng = random.Random(seed)
     objs = [rand_obj(rng, single=single) for _ in range(200 if quick else 2000)]
@@ -112,8 +112,8 @@ def test_same_bytes_as_msgpack_python(bigint_flavour, tmp_path):
              "{i: i for i in range(16)}"]  # fmt: skip
     script = tmp_path / "same.py"
     script.write_text(
-        "import msgpackc\nfrom binascii import hexlify\n"
-        f"for e in {exprs!r}:\n    print(hexlify(msgpackc.dumps(eval(e))).decode())\n"
+        "import ccbor\nfrom binascii import hexlify\n"
+        f"for e in {exprs!r}:\n    print(hexlify(ccbor.dumps(eval(e))).decode())\n"
     )
     values = [eval(e) for e in exprs]
     out = run_mp(flavour, script).split()
@@ -122,9 +122,9 @@ def test_same_bytes_as_msgpack_python(bigint_flavour, tmp_path):
     # floats: double (or single on float32 ports, like use_single_float)
     single = flavour == "float32"
     script.write_text(
-        "import msgpackc\nfrom binascii import hexlify\n"
+        "import ccbor\nfrom binascii import hexlify\n"
         "for v in (0.5, -2.25, 1e10, float('inf')):\n"
-        "    print(hexlify(msgpackc.dumps(v)).decode())\n"
+        "    print(hexlify(ccbor.dumps(v)).decode())\n"
     )
     out = run_mp(flavour, script).split()
     expected = [

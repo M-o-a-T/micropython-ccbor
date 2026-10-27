@@ -1,11 +1,11 @@
 # Exceptions: hierarchy, types and messages (the same as umsgpack's).
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 print(issubclass(m.UnsupportedTypeException, m.PackException))
 for e in (
     m.InsufficientDataException,

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Run the msgpackc tests on a board flashed with the test firmware
+# Run the ccbor tests on a board flashed with the test firmware
 # (tools/build-esp32.sh BOARD [VARIANT] --test).
 #
 # Usage: tools/test-device.sh PORT [--quick]
 #   1. the run-tests.py suite (tests/mp), the official MicroPython test runner
-#   2. the differential test against umsgpack (frozen in the test firmware)
-#   3. the msgpack-test-suite conformance
+#   2. the differential test against refcbor (to come in phase 5)
+#   3. the cbor-test-vectors conformance
 #   4. the fuzzer, on the real hardware
 set -euo pipefail
 
@@ -24,21 +24,21 @@ results="$ROOT/build/test-results/$(basename "$PORT")"
 mkdir -p "$results"
 (cd "$ROOT/micropython/tests" && "$PY" run-tests.py -t "port:$PORT" -r "$results" "$ROOT"/tests/mp/*.py) || rc=1
 
-step "differential test against umsgpack"
+step "differential test against refcbor"
 seeds="1 2 3"
 [[ $QUICK == 1 ]] && seeds="1"
 for seed in $seeds; do
     out="$("$MPREMOTE" connect "$PORT" exec "import sys; sys.argv[:] = ['', 'quick', 'seed=$seed']" \
-        run "$ROOT/tests/diff/diff_umsgpack.py" | grep -v '^Warning: Comparison' | tail -1)"
+        run "$ROOT/tests/diff/diff_ccbor.py" | grep -v '^Warning: Comparison' | tail -1)"
     echo "seed $seed: $out"
     [[ "$out" == RESULT:\ OK* ]] || rc=1
 done
 
-step "msgpack-test-suite conformance"
+step "cbor-test-vectors conformance"
 # The suite goes inside the script: each mpremote session soft-resets the
 # board, and the test firmware then starts with an empty RAM filesystem.
-script="$(mktemp -t msgpackc-conformance).py"
-python3 - "$ROOT/third_party/msgpack-test-suite/dist/msgpack-test-suite.json" \
+script="$(mktemp -t ccbor-conformance).py"
+python3 - "$ROOT/third_party/cbor-test-vectors/tests/rfc8949-appendixA/ (converted; see phase 4)" \
     "$ROOT/tests/conformance/conformance.py" > "$script" <<'PY'
 import sys
 print("SUITE_JSON = %r" % open(sys.argv[1], encoding="utf-8").read())
@@ -53,7 +53,7 @@ step "fuzzer"
 iterations=5000
 [[ $QUICK == 1 ]] && iterations=1000
 out="$("$MPREMOTE" connect "$PORT" exec "import sys; sys.argv[:] = ['', 'iterations=$iterations']" \
-    run "$ROOT/tests/fuzz/fuzz_msgpackc.py" | grep -v '^Warning: Comparison' | tail -1)"
+    run "$ROOT/tests/fuzz/fuzz_ccbor.py" | grep -v '^Warning: Comparison' | tail -1)"
 echo "$out"
 [[ "$out" == RESULT:\ OK* ]] || rc=1
 

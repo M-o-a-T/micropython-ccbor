@@ -45,20 +45,20 @@ jobs:
       - run: tools/build-unix.sh ${{ matrix.flavour }}
       - name: Tests
         env:
-          MSGPACKC_FLAVOURS: ${{ matrix.flavour }}
+          CCBOR_FLAVOURS: ${{ matrix.flavour }}
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: .venv/bin/python -m pytest -v
       - name: Coverage report
         if: matrix.flavour == 'coverage'
         run: |
-          cd build/unix-coverage/msgpackc
-          gcov -b modmsgpackc.gcda | grep -A4 "modmsgpackc.c'"
+          cd build/unix-coverage/ccbor
+          gcov -b modccbor.gcda | grep -A4 "modccbor.c'"
       - uses: actions/upload-artifact@v7
         if: matrix.flavour == 'coverage'
         with:
           name: coverage
-          path: build/unix-coverage/msgpackc/*.gcov
+          path: build/unix-coverage/ccbor/*.gcov
 
   unix-minimal:
     # The minimal variant (no floats, no OrderedDict...): checks that the
@@ -70,7 +70,7 @@ jobs:
           submodules: true
       - run: make -C micropython/ports/unix submodules && make -C micropython/mpy-cross
       - run: tools/build-unix.sh minimal
-      - run: build/unix-minimal/micropython -c "import msgpackc; print(msgpackc.loads(msgpackc.dumps([1, 'a', b'b', None])))"
+      - run: build/unix-minimal/micropython -c "import ccbor; print(ccbor.loads(ccbor.dumps([1, 'a', b'b', None])))"
 
   esp32:
     # Firmware for each chip family, built in Espressif's own image.

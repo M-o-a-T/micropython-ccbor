@@ -28,14 +28,14 @@ if [[ -z "${changes//[[:space:]]/}" ]]; then
     exit 1
 fi
 
-fw() { echo "$1-$MP_VERSION-msgpackc-$VERSION.bin"; }
+fw() { echo "$1-$MP_VERSION-ccbor-$VERSION.bin"; }
 
 cat <<EOF
 $changes
 
 ## Ready-made firmware
 
-MicroPython $MP_VERSION with msgpackc $VERSION built in (and \`msgpackc.ALoader\`
+MicroPython $MP_VERSION with ccbor $VERSION built in (and \`ccbor.ALoader\`
 frozen), for the most common Espressif chips. Nothing to compile: download the
 file for your chip and write it to the board.
 
@@ -62,10 +62,10 @@ esptool.py --port PORT --baud 460800 write_flash 0x1000 $(fw ESP32_GENERIC)
 Then, on the board:
 
 \`\`\`python
->>> import msgpackc
->>> msgpackc.__version__
+>>> import ccbor
+>>> ccbor.__version__
 '$VERSION'
->>> msgpackc.loads(msgpackc.dumps({"temp": 21.5, "ok": True}))
+>>> ccbor.loads(ccbor.dumps({"temp": 21.5, "ok": True}))
 {'temp': 21.5, 'ok': True}
 \`\`\`
 
@@ -73,6 +73,6 @@ The ESP32 firmware (with and without PSRAM) and the ESP32-P4 (early
 revisions) firmware were tested on real boards; the others are built by the
 same CI job and pass the build, but were not run on hardware. \`SHA256SUMS\`
 lists the checksums of the files. To build for another board, or to add
-msgpackc to your own firmware, see
-[docs/INSTALL.md](https://github.com/Tangerino/micropython-msgpackc/blob/v$VERSION/docs/INSTALL.md).
+ccbor to your own firmware, see
+[docs/INSTALL.md](https://github.com/Tangerino/micropython-ccbor/blob/v$VERSION/docs/INSTALL.md).
 EOF

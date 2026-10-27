@@ -40,7 +40,7 @@ jobs:
           dir=$(echo '${{ matrix.target }}' | tr 'A-Z_ ' 'a-z--')
           mp=$(tools/release-notes.sh --mp-version)
           mkdir dist
-          cp "build/$dir/firmware.bin" "dist/${{ matrix.name }}-$mp-msgpackc-${GITHUB_REF_NAME#v}.bin"
+          cp "build/$dir/firmware.bin" "dist/${{ matrix.name }}-$mp-ccbor-${GITHUB_REF_NAME#v}.bin"
       - uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.name }}
@@ -62,7 +62,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=${GITHUB_REF_NAME#v}
-          grep -q "\"$version\"" cmodules/msgpackc/modmsgpackc.c || { echo "tag $GITHUB_REF_NAME does not match msgpackc.__version__"; exit 1; }
+          grep -q "\"$version\"" cmodules/ccbor/modccbor.c || { echo "tag $GITHUB_REF_NAME does not match ccbor.__version__"; exit 1; }
           tools/release-notes.sh "$version" > notes.md
           (cd dist && sha256sum -- *.bin > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" dist/* --title "msgpackc $version" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "ccbor $version" --notes-file notes.md

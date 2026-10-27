@@ -1,4 +1,4 @@
-# Contributing to msgpackc
+# Contributing to ccbor
 
 Thank you for helping! This project follows the conventions of MicroPython
 itself ([CODECONVENTIONS.md](https://github.com/micropython/micropython/blob/master/CODECONVENTIONS.md)
@@ -43,7 +43,7 @@ If the problem is a crash or a security issue caused by crafted data, see
   configuration: `make format` formats, `make lint` checks. In short:
   4 spaces, `static` for everything that is not exported, `MP_ERROR_TEXT()`
   around every exception message, `mp_` and `MP_` names only for MicroPython
-  APIs (this module uses `msgpackc_`, `pk_` and `up_`).
+  APIs (this module uses `ccbor_`, `pk_` and `up_`).
 - **Python**: formatted with `ruff format` and checked with `ruff check`
   (the versions MicroPython uses, pinned in `pyproject.toml`).
 - Comments explain *why*, not what. English everywhere.
@@ -55,8 +55,8 @@ If the problem is a crash or a security issue caused by crafted data, see
 | change | test to add |
 |---|---|
 | a behaviour visible from Python | a case in `tests/mp/` (self-checking, with a `.exp` file) |
-| packing or unpacking | also check `tests/diff/diff_umsgpack.py` still passes, or document the new difference in `docs/USAGE.md` |
-| a crash or memory error | a reproducer in `tests/mp/msgpackc_safety.py` |
+| packing or unpacking | also check `tests/diff/diff_ccbor.py` still passes, or document the new difference in `docs/USAGE.md` |
+| a crash or memory error | a reproducer in `tests/mp/ccbor_safety.py` |
 
 The files of `tests/mp/` follow the MicroPython test format: a script and
 its expected output, run by `micropython/tests/run-tests.py` on the unix port
@@ -64,11 +64,11 @@ and on boards. Generate the `.exp` file by running the test, then **read it
 and check every line by hand** before committing it:
 
 ```bash
-build/unix-standard/micropython tests/mp/msgpackc_new.py > tests/mp/msgpackc_new.py.exp
+build/unix-standard/micropython tests/mp/ccbor_new.py > tests/mp/ccbor_new.py.exp
 ```
 
 Tests must also pass on small boards: keep their memory use low (or print
-`SKIP` when the heap is too small, as `msgpackc_large.py` does).
+`SKIP` when the heap is too small, as `ccbor_large.py` does).
 
 ## Commits
 
@@ -77,7 +77,7 @@ As in MicroPython:
 - The first line starts with the path of what changes, then a short
   description ending with a period, at most 72 characters:
   ```
-  cmodules/msgpackc: Validate the length of ext data before reading it.
+  cmodules/ccbor: Validate the length of ext data before reading it.
   ```
   ```
   docs/INSTALL: Explain how to find the serial port on WSL.
@@ -92,6 +92,6 @@ As in MicroPython:
 
 ## Licence
 
-msgpackc is MIT licensed (see [LICENSE](LICENSE)). Contributions are accepted
+ccbor is MIT licensed (see [LICENSE](LICENSE)). Contributions are accepted
 under the same licence. Code taken from elsewhere must have a compatible
 licence and keep its copyright notice.

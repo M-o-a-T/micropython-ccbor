@@ -1,7 +1,7 @@
-# Unpacking: every format of the spec (including encodings msgpackc never
+# Unpacking: every format of the spec (including encodings ccbor never
 # produces, such as non-minimal ints), the load options and the input types.
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
@@ -12,7 +12,7 @@ from binascii import unhexlify
 def check(hexdata, expected, **opts):
     data = unhexlify(hexdata.replace(" ", ""))
     try:
-        got = msgpackc.loads(data, **opts)
+        got = ccbor.loads(data, **opts)
     except Exception as e:
         got = "%s(%s)" % (type(e).__name__, e)
     if type(got) is type(expected) and got == expected:
@@ -47,10 +47,10 @@ check("d3 0000000000000005", 5)
 check("ca 3fc00000", 1.5)
 check("cb c000000000000000", -2.0)
 print(
-    msgpackc.loads(b"\xca\x7f\x80\x00\x00"),
-    msgpackc.loads(b"\xcb\xff\xf0\x00\x00\x00\x00\x00\x00"),
+    ccbor.loads(b"\xca\x7f\x80\x00\x00"),
+    ccbor.loads(b"\xcb\xff\xf0\x00\x00\x00\x00\x00\x00"),
 )
-nan = msgpackc.loads(b"\xcb\x7f\xf8\x00\x00\x00\x00\x00\x00")
+nan = ccbor.loads(b"\xcb\x7f\xf8\x00\x00\x00\x00\x00\x00")
 print(nan != nan)
 
 # str and bin, all length widths
@@ -84,25 +84,25 @@ check("a2 fffe", b"\xff\xfe", allow_invalid_utf8=True)
 try:
     from collections import OrderedDict
 
-    od = msgpackc.loads(b"\x83\xa1c\x01\xa1a\x02\xa1b\x03", use_ordered_dict=True)
+    od = ccbor.loads(b"\x83\xa1c\x01\xa1a\x02\xa1b\x03", use_ordered_dict=True)
     print(type(od).__name__, list(od.keys()))
 except ImportError:
     print("OrderedDict ['c', 'a', 'b']")
 
 # a list used as a map key becomes a (nested) tuple
-print(msgpackc.loads(b"\x81\x92\x01\x91\x02\xa1v"))
+print(ccbor.loads(b"\x81\x92\x01\x91\x02\xa1v"))
 
 # the input may be bytes, bytearray or memoryview; trailing data is ignored
-print(msgpackc.loads(bytearray(b"\x92\x01\x02")))
-print(msgpackc.loads(memoryview(b"\x00\x92\x01\x02")[1:]))
-print(msgpackc.loads(b"\x01\x02\x03"))
+print(ccbor.loads(bytearray(b"\x92\x01\x02")))
+print(ccbor.loads(memoryview(b"\x00\x92\x01\x02")[1:]))
+print(ccbor.loads(b"\x01\x02\x03"))
 
 # map keys that already exist as qstrs are shared, not copied (same object
 # in two messages); values are always new strings
-k1 = list(msgpackc.loads(b"\x81\xa4keys\x01"))[0]
-k2 = list(msgpackc.loads(b"\x81\xa4keys\x02"))[0]
+k1 = list(ccbor.loads(b"\x81\xa4keys\x01"))[0]
+k2 = list(ccbor.loads(b"\x81\xa4keys\x02"))[0]
 print(k1 == "keys", type(k1) is str, k1 is k2)
-v1 = msgpackc.loads(b"\xa4keys")
+v1 = ccbor.loads(b"\xa4keys")
 print(v1 == "keys", type(v1) is str)
 
 # round trip of a typical telemetry record
@@ -114,4 +114,4 @@ rec = {
     "raw": b"\x01\x02",
     "v": [1, 2],
 }
-print(msgpackc.loads(msgpackc.dumps(rec)) == rec)
+print(ccbor.loads(ccbor.dumps(rec)) == rec)

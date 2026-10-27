@@ -1,14 +1,14 @@
 # Ext types: the ext_serializable decorator, user classes and built-in types,
 # every ext header size, and the registry dicts.
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
 
 import struct
 
-m = msgpackc
+m = ccbor
 
 
 @m.ext_serializable(0x10)
@@ -25,7 +25,7 @@ class Blob:
 
 
 # fixext 1/2/4/8/16, then ext 8/16 around the boundaries (ext 32 is in
-# msgpackc_large.py)
+# ccbor_large.py)
 for n in (0, 1, 2, 3, 4, 8, 15, 16, 17, 255, 256, 300):
     p = m.dumps(Blob(bytes(i % 256 for i in range(n))))
     q = m.loads(p)

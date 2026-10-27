@@ -1,6 +1,6 @@
 # Security
 
-msgpackc is designed to unpack untrusted data (messages from a network, a
+ccbor is designed to unpack untrusted data (messages from a network, a
 radio, a serial line) on small devices. Bad data must only ever raise an
 exception: a crash, a hang, a read or write outside a buffer, or memory use
 far beyond the size of the data is a bug, and a security issue if it can be

@@ -12,7 +12,7 @@ import json
 import sys
 from binascii import hexlify, unhexlify
 
-import msgpackc
+import ccbor
 
 if "SUITE_JSON" in globals():
     # tools/test-device.sh prepends the suite to this script for the boards
@@ -49,7 +49,7 @@ def ext_class(code):
         return Ext(code, data)
 
     cls = type("Ext%d" % (code & 0xFF), (Ext,), {"packb": packb, "unpackb": staticmethod(unpackb)})
-    msgpackc.ext_serializable(code)(cls)
+    ccbor.ext_serializable(code)(cls)
     return cls
 
 
@@ -101,7 +101,7 @@ def equal(a, b):
     if isinstance(b, float) or isinstance(a, float):
         if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
             return False
-        if msgpackc.float_precision == "single":
+        if ccbor.float_precision == "single":
             return abs(a - b) <= abs(b) * 1e-6
         return a == b
     if isinstance(b, (list, tuple)):
@@ -132,7 +132,7 @@ for group in sorted(suite):
         for enc in encodings:
             checks += 1
             try:
-                got = msgpackc.loads(enc)
+                got = ccbor.loads(enc)
             except Exception as e:
                 got = e
             if not equal(got, expected):
@@ -140,7 +140,7 @@ for group in sorted(suite):
                 print("FAIL unpack", group, hexlify(enc), repr(got), repr(expected))
         checks += 1
         try:
-            packed = msgpackc.dumps(expected)
+            packed = ccbor.dumps(expected)
         except Exception as e:
             packed = e
         if packed not in encodings:

@@ -1,4 +1,4 @@
-# _boot.py of the msgpackc test firmware: mount a RAM filesystem at "/".
+# _boot.py of the ccbor test firmware: mount a RAM filesystem at "/".
 #
 # The flash filesystem is never mounted, so whatever another application
 # keeps on this board's flash is not read, not written and not executed.

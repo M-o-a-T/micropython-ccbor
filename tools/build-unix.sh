@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the MicroPython unix port with msgpackc, in one of the configurations
+# Build the MicroPython unix port with ccbor, in one of the configurations
 # used by the tests. Output: build/unix-<flavour>/micropython
 #
 # Usage: tools/build-unix.sh [flavour]
@@ -38,7 +38,7 @@ case "$FLAVOUR" in
     sanitize)
         # The flags of MicroPython's own CI (tools/ci.sh), ASan and UBSan in
         # one build. With clang, pointer-overflow is also excluded: it fires
-        # on an idiom of the VM core itself (py/vm.c, &sp[-n]), not on msgpackc.
+        # on an idiom of the VM core itself (py/vm.c, &sp[-n]), not on ccbor.
         # Use-after-return detection is off: its fake stack frames break the
         # NLR (non-local return) of MicroPython's exceptions.
         san="-fsanitize=address,undefined -fno-sanitize=nonnull-attribute"

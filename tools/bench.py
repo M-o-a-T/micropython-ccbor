@@ -7,7 +7,7 @@
 
 Each run is saved as docs/benchmarks/<label>.json; the report puts all the
 saved runs side by side. On a board, the test firmware must be flashed (it
-has umsgpack frozen in): tools/build-esp32.sh BOARD [VARIANT] --test.
+(the pure-Python reference will be frozen in): tools/build-esp32.sh BOARD [VARIANT] --test.
 """
 
 import argparse
@@ -27,7 +27,7 @@ BENCH = ROOT / "bench" / "bench.py"
 
 def run_unix(flavour):
     exe = ROOT / "build" / f"unix-{flavour}" / "micropython"
-    env = dict(os.environ, MICROPYPATH=f"{ROOT / 'third_party/micropython-msgpack'}:.frozen")
+    env = dict(os.environ, MICROPYPATH=".frozen")  # refcbor path: phase 5
     return subprocess.run(
         [str(exe), "-X", "heapsize=64M", str(BENCH)],
         capture_output=True, text=True, env=env, check=True,
@@ -110,12 +110,11 @@ def cmd_report(args):
         "[`bench/bench.py`](../bench/bench.py); see [TESTING.md](TESTING.md#benchmarks)",
         "for how to run it and how to read the figures.",
         "",
-        "- **msgpackc**: this module (C).",
-        "- **umsgpack**: [Peter Hinch's umsgpack](https://github.com/peterhinch/micropython-msgpack)"
-        " (pure Python; frozen bytecode on the boards, the fastest way to run it).",
+        "- **ccbor**: this module (C).",
+        "- **ccbor-ref**: the pure-Python reference codec (added in phase 5).",
         "- **json**: MicroPython's built-in `json` module (C), for reference.",
         "- *time* is per call, in microseconds (median of 5 runs); *alloc* is the heap",
-        "  allocated by one call, in bytes; *speed-up* is umsgpack time / msgpackc time.",
+        "  allocated by one call, in bytes; *speed-up* is ccbor-ref time / ccbor time.",
         "",
     ]
     for run in runs:
@@ -129,12 +128,12 @@ def cmd_report(args):
             + (f", host: {run['host']}" if run.get("host") else "")
             + f", {run['date']}.",
             "",
-            "| payload | size | msgpackc dumps | umsgpack dumps | speed-up | json dumps"
-            " | msgpackc loads | umsgpack loads | speed-up | json loads |",
+            "| payload | size | ccbor dumps | ccbor-ref dumps | speed-up | json dumps"
+            " | ccbor loads | ccbor-ref loads | speed-up | json loads |",
             "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
         ]
         for p in payloads:
-            c, u, j = by.get((p, "msgpackc")), by.get((p, "umsgpack")), by.get((p, "json"))
+            c, u, j = by.get((p, "ccbor")), by.get((p, "ccbor-ref")), by.get((p, "json"))
             lines.append(
                 f"| {p} | {c['size']} B"
                 f" | {fmt_us(c['dumps_us'])} | {fmt_us(u['dumps_us']) if u else '-'}"
@@ -148,12 +147,12 @@ def cmd_report(args):
             "",
             "Heap allocated per call (bytes) and encoded size:",
             "",
-            "| payload | msgpackc dumps | umsgpack dumps | json dumps | msgpackc loads"
-            " | umsgpack loads | json loads | json size |",
+            "| payload | ccbor dumps | ccbor-ref dumps | json dumps | ccbor loads"
+            " | ccbor-ref loads | json loads | json size |",
             "|---|--:|--:|--:|--:|--:|--:|--:|",
         ]
         for p in payloads:
-            c, u, j = by.get((p, "msgpackc")), by.get((p, "umsgpack")), by.get((p, "json"))
+            c, u, j = by.get((p, "ccbor")), by.get((p, "ccbor-ref")), by.get((p, "json"))
             lines.append(
                 f"| {p} | {c['dumps_alloc']} | {u['dumps_alloc'] if u else '-'}"
                 f" | {j['dumps_alloc'] if j else '-'} | {c['loads_alloc']}"
@@ -169,7 +168,7 @@ def cmd_report(args):
             f"{sizes['note']}. *text*, *data* and *bss* are the sections of the module's object"
             " file: *bss* 0 means no RAM is reserved.",
             "",
-            "| firmware | with msgpackc | without | difference | text | data | bss |",
+            "| firmware | with ccbor | without | difference | text | data | bss |",
             "|---|--:|--:|--:|--:|--:|--:|",
         ]
         for z in sizes["sizes"]:
@@ -199,12 +198,12 @@ def readme_summary(runs):
         "Time to pack and unpack a list of 20 telemetry records (1 KiB), and heap"
         " allocated, per call ([all the figures](docs/BENCHMARKS.md)):",
         "",
-        "| | msgpackc dumps | umsgpack dumps | | msgpackc loads | umsgpack loads | |",
+        "| | ccbor dumps | ccbor-ref dumps | | ccbor loads | ccbor-ref loads | |",
         "|---|--:|--:|--:|--:|--:|--:|",
     ]
     for run in runs:
         by = {(r["payload"], r["lib"]): r for r in run["results"]}
-        c, u = by.get((SUMMARY_PAYLOAD, "msgpackc")), by.get((SUMMARY_PAYLOAD, "umsgpack"))
+        c, u = by.get((SUMMARY_PAYLOAD, "ccbor")), by.get((SUMMARY_PAYLOAD, "ccbor-ref"))
         if not c or not u:
             continue
         lines.append(

@@ -1,9 +1,11 @@
 """The MicroPython-side test programs, run on each unix build:
-the run-tests.py suite, the differential test against umsgpack, the fuzzer,
-the msgpack-test-suite conformance and umsgpack's own test suite."""
+the run-tests.py suite, the differential test, the fuzzer and the
+conformance check. (Differential/conformance move from umsgpack and
+msgpack-test-suite to refcbor and cbor-test-vectors in phases 4/5.)"""
 
 import os
-import shutil
+
+import pytest
 import subprocess
 
 from conftest import INTBIG_TESTS, LONGLONG, ROOT, micropython, run_mp
@@ -28,42 +30,21 @@ def test_run_tests_suite(flavour):
     assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
 
 
-def test_differential_vs_umsgpack(bigint_flavour, quick):
-    out = run_mp(bigint_flavour, ROOT / "tests/diff/diff_umsgpack.py", *(["quick"] if quick else []),
+def test_differential(bigint_flavour, quick):
+    out = run_mp(bigint_flavour, ROOT / "tests/diff/diff_ccbor.py", *(["quick"] if quick else []),
                  path=[PETER])  # fmt: skip
     assert "RESULT: OK" in out, out[-3000:]
 
 
 def test_fuzz(bigint_flavour, quick):
-    out = run_mp(bigint_flavour, ROOT / "tests/fuzz/fuzz_msgpackc.py",
+    out = run_mp(bigint_flavour, ROOT / "tests/fuzz/fuzz_ccbor.py",
                  f"iterations={5000 if quick else 100000}", heap="128M")  # fmt: skip
     assert "RESULT: OK" in out, out[-3000:]
 
 
 def test_conformance(bigint_flavour):
-    suite = ROOT / "third_party/msgpack-test-suite/dist/msgpack-test-suite.json"
+    suite = PETER.parent / "msgpack-test-suite" / "dist" / "msgpack-test-suite.json"
+    if not suite.exists():
+        pytest.skip("msgpack-test-suite submodule not fetched (replaced in phase 4)")
     out = run_mp(bigint_flavour, ROOT / "tests/conformance/conformance.py", suite)
     assert "RESULT: OK" in out, out
-
-
-def test_umsgpack_own_suite(bigint_flavour, tmp_path):
-    flavour = bigint_flavour
-    """Peter Hinch's test_umsgpack.py, through the umsgpack compatibility
-    package: the result must be the same as with umsgpack itself."""
-    unittest = ROOT / "micropython/lib/micropython-lib/python-stdlib/unittest"
-    shim = tmp_path / "shim" / "umsgpack"
-    shim.mkdir(parents=True)
-    shutil.copy(ROOT / "python/umsgpack/__init__.py", shim)
-    for f in (PETER / "umsgpack").glob("mpk_*.py"):
-        shutil.copy(f, shim)
-    shutil.copy(PETER / "test_umsgpack.py", tmp_path)
-
-    def failed(path):
-        env = dict(os.environ, MICROPYPATH=f"{path}:{unittest}:.frozen")
-        proc = subprocess.run(
-            [str(micropython(flavour)), "-X", "heapsize=64M", "test_umsgpack.py"],
-            cwd=tmp_path, capture_output=True, text=True, env=env,
-        )  # fmt: skip
-        return sorted(line for line in proc.stdout.splitlines() if line.startswith("FAIL:"))
-
-    assert failed(tmp_path / "shim") == failed(PETER)

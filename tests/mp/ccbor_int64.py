@@ -3,7 +3,7 @@
 # above 2**63 - 1 cannot be represented and unpacks with OverflowError.
 # No literal here exceeds 63 bits, so the file compiles on both.
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
@@ -15,7 +15,7 @@ try:
 except (OverflowError, ValueError):
     BIG = False
 
-m = msgpackc
+m = ccbor
 INT64_MAX = 0x7FFFFFFFFFFFFFFF
 INT64_MIN = -INT64_MAX - 1
 

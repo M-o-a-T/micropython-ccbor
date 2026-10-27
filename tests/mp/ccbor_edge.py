@@ -1,13 +1,13 @@
 # Edge cases of the API, mostly error paths, found with the coverage build.
 try:
-    import msgpackc
+    import ccbor
     import io
     import sys
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 
 
 def show(f, *args, **kw):
@@ -52,14 +52,14 @@ def io_outcome(f, *args):
 
 
 try:
-    with open("msgpackc_edge.tmp", "wb") as f:
+    with open("ccbor_edge.tmp", "wb") as f:
         f.write(b"\x01")
         print(io_outcome(m.load, f))  # not readable
-    with open("msgpackc_edge.tmp", "rb") as f:
+    with open("ccbor_edge.tmp", "rb") as f:
         print(io_outcome(m.dump, 1, f))  # not writable
     import os
 
-    os.remove("msgpackc_edge.tmp")
+    os.remove("ccbor_edge.tmp")
 except OSError:
     print("ok")  # no writable filesystem
     print("ok")
@@ -99,13 +99,13 @@ d["g"] = GrowDict(d)
 show(m.dumps, d)
 
 # the registry module replaced in sys.modules is rebuilt; broken dicts are an error
-reg = sys.modules["_msgpackc_ext"]
-sys.modules["_msgpackc_ext"] = 1
+reg = sys.modules["_ccbor_ext"]
+sys.modules["_ccbor_ext"] = 1
 m.ext_serializable(0x62)(type("Fresh", (), {}))
 print(sorted(m.packers))
-sys.modules["_msgpackc_ext"].packers = 1
+sys.modules["_ccbor_ext"].packers = 1
 show(m.loads, b"\xd4\x62\x00")
-sys.modules["_msgpackc_ext"] = reg
+sys.modules["_ccbor_ext"] = reg
 
 # iterating an Unpacker again without feeding it, and other operations
 u = m.Unpacker()

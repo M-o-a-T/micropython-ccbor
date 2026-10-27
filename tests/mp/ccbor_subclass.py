@@ -1,11 +1,11 @@
 # Subclasses of the native types and native subtypes pack like their base.
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 
 
 class I(int):

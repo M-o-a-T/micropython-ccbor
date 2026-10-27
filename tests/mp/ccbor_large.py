@@ -1,7 +1,7 @@
 # The 32-bit length formats (str 32, bin 32, array 32, map 32, ext 32), which
 # need objects of 64 KiB and more. Skipped where the heap is too small.
 try:
-    import msgpackc
+    import ccbor
     import gc
 except ImportError:
     print("SKIP")
@@ -12,7 +12,7 @@ if gc.mem_free() < 4_000_000:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 N = 0x10000
 
 

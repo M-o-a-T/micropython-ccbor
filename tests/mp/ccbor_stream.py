@@ -1,13 +1,13 @@
 # dump/load on streams: native streams (BytesIO), Python file-like objects,
 # short reads, several objects in a row, end of data.
 try:
-    import msgpackc
+    import ccbor
     import io
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 
 # several objects back to back; load reads exactly one object each time
 f = io.BytesIO()

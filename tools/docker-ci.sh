@@ -35,11 +35,11 @@ for f in $FLAVOURS; do
     echo "=== $f"
     tools/build-unix.sh "$f" >/tmp/build-$f.log 2>&1 || { tail -30 /tmp/build-$f.log; rc=1; continue; }
     if [[ $f == minimal ]]; then
-        build/unix-minimal/micropython -c "import msgpackc; print(msgpackc.loads(msgpackc.dumps([1, \"a\", b\"b\", None])))" || rc=1
+        build/unix-minimal/micropython -c "import ccbor; print(ccbor.loads(ccbor.dumps([1, \"a\", b\"b\", None])))" || rc=1
         continue
     fi
     ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-    MSGPACKC_FLAVOURS=$f MSGPACKC_QUICK=1 .venv/bin/python -m pytest -q --tb=short || rc=1
+    CCBOR_FLAVOURS=$f CCBOR_QUICK=1 .venv/bin/python -m pytest -q --tb=short || rc=1
 done
 exit $rc
 '

@@ -16,7 +16,7 @@ First release.
   and `max_buffer_size`.
 - `ALoader` (Python, `python/msgpackc_aio.py`): asyncio decoding.
 - `umsgpack` compatibility package (`python/umsgpack/`).
-- Nesting limited to 32 levels (`MSGPACKC_MAX_DEPTH`).
+- Nesting limited to 32 levels (`CCBOR_MAX_DEPTH`).
 - Build, flash, test and benchmark tooling for the unix port and ESP32
   boards, with a repo-local ESP-IDF v5.5.2.
 - Ready-made firmware in each GitHub release, built by CI

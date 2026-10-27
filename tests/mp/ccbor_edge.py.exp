@@ -8,7 +8,7 @@ ok
 RuntimeError container changed size during packing
 RuntimeError container changed size during packing
 [98]
-TypeError _msgpackc_ext registry damaged
+TypeError _ccbor_ext registry damaged
 [] [] 1
 True
 TypeError unsupported type for __neg__: 'Unpacker'

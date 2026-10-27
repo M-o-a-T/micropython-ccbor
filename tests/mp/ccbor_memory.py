@@ -1,13 +1,13 @@
 # Memory: repeated packing and unpacking does not leak, and the heap used by
 # one call is small and bounded.
 try:
-    import msgpackc
+    import ccbor
     import gc
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 rec = {"ts": 1729243200, "id": "sensor-01", "t": -12.5, "ok": True, "v": [1, 2, 3], "raw": b"\x01"}
 data = m.dumps(rec)
 

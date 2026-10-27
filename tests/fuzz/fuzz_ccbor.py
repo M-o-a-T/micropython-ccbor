@@ -1,10 +1,10 @@
-# Fuzzer for msgpackc, meant to run on the sanitizer build of the unix port
+# Fuzzer for ccbor, meant to run on the sanitizer build of the unix port
 # (tools/build-unix.sh sanitize), where any memory error aborts the process.
 #
-#   micropython fuzz_msgpackc.py [iterations=N] [seed=N]
+#   micropython fuzz_ccbor.py [iterations=N] [seed=N]
 #
 # 1. Random, mutated and truncated byte strings go through loads(), load()
-#    and an Unpacker fed in random chunks: only msgpackc exceptions (and
+#    and an Unpacker fed in random chunks: only ccbor exceptions (and
 #    RuntimeError for nesting) may come out, never a crash, and the three
 #    entry points must agree.
 # 2. Random objects round-trip: loads(dumps(o)) equals o, up to the types
@@ -17,7 +17,7 @@ import random
 import struct
 import sys
 
-import msgpackc as m
+import ccbor as m
 
 ITER = 200000
 SEED = 7

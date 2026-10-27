@@ -1,12 +1,12 @@
 # Robustness: hostile input, deep nesting, cycles, and Python callbacks that
 # modify the data being packed or unpacked. Nothing here may crash.
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 
 
 def show(f, *args, **kw):

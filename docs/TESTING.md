@@ -1,15 +1,15 @@
-# How msgpackc is tested
+# How ccbor is tested
 
 A serializer is trusted with every message an application sends and
 receives, and on a microcontroller a bug in C does not raise an exception: it
-reboots the board, or worse. So `msgpackc` is tested from several independent
+reboots the board, or worse. So `ccbor` is tested from several independent
 angles, each able to catch what the others miss.
 
 - [Summary](#summary)
 - [Running the tests](#running-the-tests)
 - [1. The run-tests.py suite](#1-the-run-testspy-suite)
-- [2. Differential test against umsgpack](#2-differential-test-against-umsgpack)
-- [3. umsgpack's own test suite](#3-umsgpacks-own-test-suite)
+- [2. Differential test against ccbor-ref](#2-differential-test-against-ccbor-ref)
+- [3. ccbor-ref's own test suite](#3-ccbor-refs-own-test-suite)
 - [4. Conformance: msgpack-test-suite](#4-conformance-msgpack-test-suite)
 - [5. Interoperability with msgpack-python](#5-interoperability-with-msgpack-python)
 - [6. Fuzzing under sanitizers](#6-fuzzing-under-sanitizers)
@@ -27,8 +27,8 @@ Results of version 1.0.0 (2026-10-18), all passing:
 | test | unix port | ESP32 | ESP32-P4 |
 |---|---|---|---|
 | [run-tests.py suite](#1-the-run-testspy-suite) (13 files, ~290 cases) | standard, float32, sanitize, coverage, longlong (10 files), minimal (build) | 12/12 with and without PSRAM (`large` skipped: heap) | 13/13 |
-| [differential vs umsgpack](#2-differential-test-against-umsgpack) | ~178,000 checks per run, on every build; 2.3 million during development | 3 seeds | 3 seeds |
-| [umsgpack's own suite](#3-umsgpacks-own-test-suite) | same results as umsgpack | | |
+| [differential vs ccbor-ref](#2-differential-test-against-ccbor-ref) | ~178,000 checks per run, on every build; 2.3 million during development | 3 seeds | 3 seeds |
+| [ccbor-ref's own suite](#3-ccbor-refs-own-test-suite) | same results as ccbor-ref | | |
 | [msgpack-test-suite](#4-conformance-msgpack-test-suite) | 318/318, double and single floats | 318/318 | 318/318 |
 | [interoperability with msgpack-python](#5-interoperability-with-msgpack-python) | 6,000 objects both ways per build, identical encodings | | |
 | [fuzzing](#6-fuzzing-under-sanitizers) | ASan + UBSan (clang, and gcc on Linux): 100,000 iterations per run, 1 million during development | 5,000 iterations | 5,000 iterations |
@@ -52,8 +52,8 @@ build.
 
 The host tests are driven by `pytest` (`tests/host/`); each one runs a
 MicroPython program on a unix build of the module. Select the builds with
-`MSGPACKC_FLAVOURS="standard float32"` and the short versions with
-`MSGPACKC_QUICK=1`.
+`CCBOR_FLAVOURS="standard float32"` and the short versions with
+`CCBOR_QUICK=1`.
 
 ## 1. The run-tests.py suite
 
@@ -66,22 +66,22 @@ and are written in the test, so the `.exp` files mostly say `ok`.
 
 | file | covers |
 |---|---|
-| `msgpackc_pack.py` | every format family at every size boundary |
-| `msgpackc_unpack.py` | every format, including non-minimal encodings, options, input types |
-| `msgpackc_errors.py` | the exception hierarchy, every error and its message |
-| `msgpackc_ext.py` | extension types: every header size, user classes, built-ins, registry, errors |
-| `msgpackc_stream.py` | `dump`/`load` on native streams and Python file-like objects, short reads |
-| `msgpackc_unpacker.py` | `Unpacker` with every chunk size, `next_raw`, resynchronisation, limits |
-| `msgpackc_aloader.py` | `ALoader` with asyncio, observer, end of stream |
-| `msgpackc_subclass.py` | subclasses of the native types, `namedtuple`, `OrderedDict` |
-| `msgpackc_safety.py` | hostile input: nesting, cycles, huge lengths, every truncation, data changed by callbacks |
-| `msgpackc_memory.py` | no leak; heap allocated per call |
-| `msgpackc_edge.py` | error paths found with the coverage build |
-| `msgpackc_large.py` | the 32-bit length formats (skipped on small heaps) |
+| `ccbor_pack.py` | every format family at every size boundary |
+| `ccbor_unpack.py` | every format, including non-minimal encodings, options, input types |
+| `ccbor_errors.py` | the exception hierarchy, every error and its message |
+| `ccbor_ext.py` | extension types: every header size, user classes, built-ins, registry, errors |
+| `ccbor_stream.py` | `dump`/`load` on native streams and Python file-like objects, short reads |
+| `ccbor_unpacker.py` | `Unpacker` with every chunk size, `next_raw`, resynchronisation, limits |
+| `ccbor_aloader.py` | `ALoader` with asyncio, observer, end of stream |
+| `ccbor_subclass.py` | subclasses of the native types, `namedtuple`, `OrderedDict` |
+| `ccbor_safety.py` | hostile input: nesting, cycles, huge lengths, every truncation, data changed by callbacks |
+| `ccbor_memory.py` | no leak; heap allocated per call |
+| `ccbor_edge.py` | error paths found with the coverage build |
+| `ccbor_large.py` | the 32-bit length formats (skipped on small heaps) |
 
-## 2. Differential test against umsgpack
+## 2. Differential test against ccbor-ref
 
-`tests/diff/diff_umsgpack.py` runs msgpackc and umsgpack side by side on the
+`tests/diff/diff_ccbor-ref.py` runs ccbor and ccbor-ref side by side on the
 same inputs and compares everything: the bytes produced by `dumps` and
 `dump`, the objects returned by `loads` and `load`, and for errors the
 exception type **and** message. Inputs:
@@ -97,20 +97,20 @@ The generator is seeded, so a failure can be replayed. A full run is about
 each board.
 
 The only differences found are deliberate, and listed in
-[USAGE.md](USAGE.md#10-differences-from-umsgpack). The most important: where
-umsgpack raises `MemoryError` or `OverflowError` on a corrupt length (it
-allocates the length before reading), msgpackc raises
+[USAGE.md](USAGE.md#10-differences-from-ccbor-ref). The most important: where
+ccbor-ref raises `MemoryError` or `OverflowError` on a corrupt length (it
+allocates the length before reading), ccbor raises
 `InsufficientDataException`. Those cases are counted by the test ("MemoryError
 avoided"): around 1,500 per full run.
 
-## 3. umsgpack's own test suite
+## 3. ccbor-ref's own test suite
 
-Peter Hinch's `test_umsgpack.py` (from u-msgpack-python, 132 test
-vectors in 14 tests) runs on msgpackc through the `umsgpack` compatibility package, with
-umsgpack's own `mpk_*.py` extension modules. On MicroPython, umsgpack itself
+Peter Hinch's `test_ccbor-ref.py` (from u-msgpack-python, 132 test
+vectors in 14 tests) runs on ccbor through the `ccbor-ref` compatibility package, with
+ccbor-ref's own `mpk_*.py` extension modules. On MicroPython, ccbor-ref itself
 fails 2 of its 14 tests (they compare an `OrderedDict` with a `dict`, which
-MicroPython does not consider equal); msgpackc passes and fails exactly the
-same tests (`tests/host/test_suites.py::test_umsgpack_own_suite`).
+MicroPython does not consider equal); ccbor passes and fails exactly the
+same tests (`tests/host/test_suites.py::test_ccbor-ref_own_suite`).
 
 ## 4. Conformance: msgpack-test-suite
 
@@ -127,14 +127,14 @@ the unix port, the ESP32 and the ESP32-P4.
 implementation for CPython. `tests/host/test_interop.py`:
 
 - packs thousands of random objects with msgpack-python, unpacks and packs
-  them again with msgpackc, and unpacks the result with msgpack-python: the
+  them again with ccbor, and unpacks the result with msgpack-python: the
   objects must survive both directions;
-- checks that, for the same value, msgpackc and msgpack-python choose the
+- checks that, for the same value, ccbor and msgpack-python choose the
   same encoding, byte for byte, at every size boundary.
 
 ## 6. Fuzzing under sanitizers
 
-`tests/fuzz/fuzz_msgpackc.py` feeds random, mutated and truncated data to
+`tests/fuzz/fuzz_ccbor.py` feeds random, mutated and truncated data to
 `loads`, `load` and an `Unpacker` fed in random chunks, checks that they
 agree, and round-trips random objects. It runs on a unix build with
 **AddressSanitizer and UndefinedBehaviorSanitizer** (`make test-sanitize`),
@@ -145,7 +145,7 @@ on that build too.
 ## 7. Coverage
 
 `make coverage` runs the test programs on the coverage build and reports the
-coverage of `modmsgpackc.c` with gcov: **99.1% of the lines, all branches
+coverage of `modccbor.c` with gcov: **99.1% of the lines, all branches
 executed, 95.9% of them taken both ways**. The 9 lines never executed are
 error paths that cannot be reached on purpose: objects above 4 GiB (4 lines;
 no board holds one), a native subtype without a known layout (none exists in
@@ -155,7 +155,7 @@ one always triggers before.
 
 ## 8. Memory
 
-`msgpackc_memory.py` checks that thousands of calls do not make the heap
+`ccbor_memory.py` checks that thousands of calls do not make the heap
 grow, and bounds the memory one call allocates: `dumps` allocates the result
 and little more, `loads` allocates the objects it returns. The benchmark
 measures the allocation of each call (see [BENCHMARKS.md](BENCHMARKS.md)).
@@ -184,19 +184,19 @@ ESP32-P4.
 
 ## Benchmarks
 
-`bench/bench.py` measures, for msgpackc, umsgpack and the built-in `json`,
+`bench/bench.py` measures, for ccbor, ccbor-ref and the built-in `json`,
 on the same payloads: the time of `dumps` and `loads` (median of 5 runs,
 each long enough for the timer), the heap allocated by one call (with the GC
 disabled) and the size of the result. `tools/bench.py` runs it on unix builds
 and boards and writes [BENCHMARKS.md](BENCHMARKS.md).
 
-On the boards umsgpack is frozen into the firmware, which is the fastest and
+On the boards ccbor-ref is frozen into the firmware, which is the fastest and
 leanest way to run Python code: the comparison is fair to it. Timings on a
 computer vary with its load; on the boards they are stable to a few percent.
 
 ## Problems found along the way
 
-Testing found real problems in msgpackc before its release, among them:
+Testing found real problems in ccbor before its release, among them:
 
 - `namedtuple` objects were read as Python class instances
   (`mp_obj_cast_to_native_base()` assumes one): found by the differential
@@ -214,7 +214,7 @@ Testing found real problems in msgpackc before its release, among them:
   (`tools/docker-ci.sh`), which macOS does not cover.
 - Looking up every unpacked string as an existing qstr made lists of strings
   2.7 times slower to unpack on the ESP32-P4: only map keys are looked up now
-  (see `MSGPACKC_REUSE_QSTR` in [USAGE.md](USAGE.md#12-build-time-configuration)).
+  (see `CCBOR_REUSE_QSTR` in [USAGE.md](USAGE.md#12-build-time-configuration)).
 
 It also found three issues of MicroPython itself, which only affect
 sanitizer builds and are worked around in `tools/build-unix.sh`; they are
@@ -232,7 +232,7 @@ worth reporting upstream:
   (`&sp[-n]`); gcc does not report it.
 
 On builds limited to 64-bit ints (`longlong`), `int()` of a number above
-2**64 does not raise `OverflowError`: `tests/mp/msgpackc_int64.py` checks for
+2**64 does not raise `OverflowError`: `tests/mp/ccbor_int64.py` checks for
 big ints by converting the result back to a string.
 
 And one of the macOS toolchain: the AddressSanitizer runtime refuses to start

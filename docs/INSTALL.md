@@ -1,24 +1,24 @@
-# Installing msgpackc
+# Installing ccbor
 
 This guide takes you from nothing to a board running MicroPython with
-`msgpackc`. Follow the steps in order; every command is meant to be copied
+`ccbor`. Follow the steps in order; every command is meant to be copied
 as it is. No previous experience with MicroPython builds is needed.
 
 - [1. What you need](#1-what-you-need)
 - [2. Get the code](#2-get-the-code)
 - [3. Prepare the tools](#3-prepare-the-tools)
-- [4. Try msgpackc on your computer](#4-try-msgpackc-on-your-computer)
+- [4. Try ccbor on your computer](#4-try-ccbor-on-your-computer)
 - [5. Build a firmware for an ESP32 board](#5-build-a-firmware-for-an-esp32-board)
-- [6. Add msgpackc to your own MicroPython build](#6-add-msgpackc-to-your-own-micropython-build)
+- [6. Add ccbor to your own MicroPython build](#6-add-ccbor-to-your-own-micropython-build)
 - [7. The Python helpers](#7-the-python-helpers)
 - [8. Troubleshooting](#8-troubleshooting)
 
-> **Why a build?** `msgpackc` is written in C, so it is compiled *into* the
+> **Why a build?** `ccbor` is written in C, so it is compiled *into* the
 > MicroPython firmware: you cannot just copy a file to the board. This repo
 > makes that build a few commands long.
 
 > **Shortcut for ESP32 boards:** each
-> [release](https://github.com/Tangerino/micropython-msgpackc/releases/latest)
+> [release](https://github.com/M-o-a-T/micropython-ccbor/releases/latest)
 > has ready-made firmware for ESP32 (with and without PSRAM), ESP32-S3, C3,
 > C6 and P4, with the `esptool.py` commands to write them. If your board is
 > one of these and you do not need to change anything, you can skip this
@@ -53,8 +53,8 @@ ESP32-P4...) and a USB **data** cable (some cables only charge).
 ## 2. Get the code
 
 ```bash
-git clone --recursive https://github.com/Tangerino/micropython-msgpackc.git
-cd micropython-msgpackc
+git clone --recursive https://github.com/M-o-a-T/micropython-ccbor.git
+cd micropython-ccbor
 ```
 
 `--recursive` also downloads MicroPython v1.29.0 (in `micropython/`) and the
@@ -74,10 +74,10 @@ MicroPython compiler) and creates a Python environment in `.venv/` with the
 test and board tools (`mpremote`, `pytest`, `msgpack`...). It takes a few
 minutes the first time and does not touch the rest of your system.
 
-## 4. Try msgpackc on your computer
+## 4. Try ccbor on your computer
 
 MicroPython also runs on your computer (the "unix port"). It is the quickest
-way to see `msgpackc` working:
+way to see `ccbor` working:
 
 ```bash
 make unix
@@ -87,11 +87,11 @@ build/unix-standard/micropython
 You get the MicroPython prompt `>>>`. Type:
 
 ```python
->>> import msgpackc
->>> data = msgpackc.dumps({"temp": 21.5, "ok": True, "tags": ["a", "b"]})
+>>> import ccbor
+>>> data = ccbor.dumps({"temp": 21.5, "ok": True, "tags": ["a", "b"]})
 >>> data
 b'\x83\xa4tags\x92\xa1a\xa1b\xa2ok\xc3\xa4temp\xcb@5\x80\x00\x00\x00\x00\x00'
->>> msgpackc.loads(data)
+>>> ccbor.loads(data)
 {'tags': ['a', 'b'], 'ok': True, 'temp': 21.5}
 ```
 
@@ -219,7 +219,7 @@ make firmware-test BOARD=ESP32_GENERIC
 make test-device PORT=/dev/ttyUSB0
 ```
 
-## 6. Add msgpackc to your own MicroPython build
+## 6. Add ccbor to your own MicroPython build
 
 If you already build MicroPython yourself (any port, v1.29 or later), you only
 need the `cmodules/` directory of this repo. Copy it next to your project, or
@@ -246,9 +246,9 @@ cd micropython/ports/stm32
 make BOARD=PYBV11 USER_C_MODULES=/path/to/cmodules
 ```
 
-That is all: `import msgpackc` works on the new firmware. To check that the
+That is all: `import ccbor` works on the new firmware. To check that the
 module is in a firmware, run `help("modules")` at its prompt and look for
-`msgpackc`.
+`ccbor`.
 
 The module needs nothing from the board and has no configuration to set. It
 adds about 12 KiB of flash (15 KiB on RISC-V chips such as the ESP32-C3, C6 and P4) and reserves no RAM.
@@ -260,28 +260,25 @@ repo (`make firmware`) already contains the first one.
 
 | file | gives you | needed for |
 |---|---|---|
-| `python/msgpackc_aio.py` | `msgpackc.ALoader` | asynchronous decoding with asyncio |
-| `python/umsgpack/__init__.py` | `import umsgpack` | running code written for umsgpack unchanged |
+| `python/ccbor_aio.py` | `ccbor.ALoader` | asynchronous decoding with asyncio |
 
 To put them on a board without rebuilding, copy them with mpremote:
 
 ```bash
-.venv/bin/mpremote connect PORT mkdir :lib + cp python/msgpackc_aio.py :lib/
-.venv/bin/mpremote connect PORT mkdir :lib/umsgpack + cp python/umsgpack/__init__.py :lib/umsgpack/
-```
+.venv/bin/mpremote connect PORT mkdir :lib + cp python/ccbor_aio.py :lib/
+````
 
 or install them with `mip` from the board itself (when it has a network
 connection) or from your computer:
 
 ```bash
-.venv/bin/mpremote connect PORT mip install github:Tangerino/micropython-msgpackc
+.venv/bin/mpremote connect PORT mip install github:M-o-a-T/micropython-ccbor
 ```
 
 To freeze them into your own firmware, add to your manifest:
 
 ```python
-module("msgpackc_aio.py", base_path="/path/to/python")
-package("umsgpack", base_path="/path/to/python")
+module("ccbor_aio.py", base_path="/path/to/python")
 ```
 
 ## 8. Troubleshooting
@@ -305,12 +302,12 @@ mode (5.5), close any other program that uses the serial port (an open
 `mpremote`, the Arduino IDE serial monitor...), try a lower speed by
 running esptool by hand with `-b 115200`.
 
-**`ImportError: no module named 'msgpackc'`** on the board: the board runs a
+**`ImportError: no module named 'ccbor'`** on the board: the board runs a
 firmware without the module (for example one downloaded from
 micropython.org). Build and flash it as in section 5.
 
-**`ImportError: no module named 'msgpackc_aio'`** when using
-`msgpackc.ALoader`: your firmware does not include the helper; copy it as in
+**`ImportError: no module named 'ccbor_aio'`** when using
+`ccbor.ALoader`: your firmware does not include the helper; copy it as in
 section 7.
 
 **The build of the unix port fails on macOS with `ffi.h` not found**: install

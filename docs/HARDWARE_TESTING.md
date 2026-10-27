@@ -29,8 +29,8 @@ board without touching its data:
 - its `_boot.py` (`firmware/testboot/_boot.py`) does **not** mount the flash
   filesystem: it mounts a small filesystem in RAM instead. The application's
   files are not read, not modified, and its `boot.py`/`main.py` do not run;
-- it includes Peter Hinch's umsgpack, frozen, as the reference for the
-  differential tests and the benchmarks.
+- the pure-Python reference codec for the differential tests and the
+  benchmarks will be frozen in (phase 5).
 
 So the board's files and settings survive, and once you write the original
 application back, the board is exactly as before. A full backup of the
@@ -74,7 +74,7 @@ nowhere else.
 Check it booted:
 
 ```bash
-.venv/bin/mpremote connect /dev/ttyUSB0 exec "import os, msgpackc; print(os.uname().version, os.listdir('/'))"
+.venv/bin/mpremote connect /dev/ttyUSB0 exec "import os, ccbor; print(os.uname().version, os.listdir('/'))"
 ```
 
 `os.listdir('/')` shows the RAM filesystem: empty, the application's files
@@ -88,7 +88,7 @@ make bench-board BOARD=ESP32_GENERIC VARIANT=SPIRAM PORT=/dev/ttyUSB0
 ```
 
 `test-device` runs, on the board: the `run-tests.py` suite, the differential
-test against umsgpack, the msgpack-test-suite conformance and the fuzzer.
+test against ccbor-ref, the msgpack-test-suite conformance and the fuzzer.
 `bench-board` saves the results in `docs/benchmarks/` and regenerates
 [BENCHMARKS.md](BENCHMARKS.md).
 

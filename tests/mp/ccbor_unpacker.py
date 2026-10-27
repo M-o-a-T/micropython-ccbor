@@ -1,11 +1,11 @@
 # Unpacker: incremental decoding of data that arrives in arbitrary chunks.
 try:
-    import msgpackc
+    import ccbor
 except ImportError:
     print("SKIP")
     raise SystemExit
 
-m = msgpackc
+m = ccbor
 objs = [{"a": [1, 2, 3]}, "hello", 42, [None, True, b"\x00" * 40], -1.5, {"n": {"m": {}}}]
 stream = b"".join(m.dumps(o) for o in objs)
 

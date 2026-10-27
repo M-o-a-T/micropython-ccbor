@@ -1,4 +1,4 @@
-# Benchmark: msgpackc (C) against umsgpack (Peter Hinch, pure Python) and the
+# Benchmark: ccbor (C) against the pure-Python reference and the
 # built-in json module (C), on the same payloads. Runs under MicroPython: the
 # unix port or a board.
 #
@@ -17,12 +17,12 @@ import json
 import sys
 import time
 
-import msgpackc
+import ccbor
 
 try:
-    import umsgpack
+    import refcbor
 except ImportError:
-    umsgpack = None
+    refcbor = None
 
 QUICK = "quick" in sys.argv
 RUNS = 3 if QUICK else 5
@@ -61,9 +61,9 @@ PAYLOADS = [
     ("bytes 1 KiB", bytes(range(256)) * 4),
 ]
 
-LIBS = [("msgpackc", msgpackc.dumps, msgpackc.loads)]
-if umsgpack:
-    LIBS.append(("umsgpack", umsgpack.dumps, umsgpack.loads))
+LIBS = [("ccbor", ccbor.dumps, ccbor.loads)]
+if refcbor:
+    LIBS.append(("ccbor-ref", refcbor.dumps, refcbor.loads))
 LIBS.append(("json", json.dumps, json.loads))
 
 
@@ -91,7 +91,7 @@ def per_call_us(f, arg):
 
 
 def alloc_bytes(f, arg):
-    f(arg)  # warm up (lazy imports of umsgpack, qstr creation...)
+    f(arg)  # warm up (lazy imports of refcbor, qstr creation...)
     gc.collect()
     gc.disable()
     try:
@@ -130,7 +130,7 @@ for pname, obj in PAYLOADS:
         results.append(r)
         print("BENCH", json.dumps(r))
 
-print("BENCH-INFO", json.dumps({"platform": platform(), "float": msgpackc.float_precision}))
+print("BENCH-INFO", json.dumps({"platform": platform(), "float": ccbor.float_precision}))
 print()
 print(
     "%-16s %-9s %6s %10s %10s %9s %9s"
