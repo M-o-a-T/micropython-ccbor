@@ -1,4 +1,4 @@
-# msgpackc — fast MessagePack for MicroPython, in C
+# ccbor — fast CBOR for MicroPython, in C
 
 [![CI](https://github.com/Tangerino/micropython-msgpackc/actions/workflows/ci.yml/badge.svg)](https://github.com/Tangerino/micropython-msgpackc/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Tangerino/micropython-msgpackc)](https://github.com/Tangerino/micropython-msgpackc/releases/latest)
