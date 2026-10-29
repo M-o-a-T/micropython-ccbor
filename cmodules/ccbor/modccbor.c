@@ -74,6 +74,15 @@
 #define CCBOR_MAX_DEPTH (32)
 #endif
 
+// Limbs of the biggest integer that packs natively as a bignum (tag 2/3).
+// The buffer must cover 2**64 (5 limbs of 16 bits on builds that force
+// MPZ_DIG_SIZE=16, like the unix port) and a useful margin beyond; 8 limbs
+// cover 128 bits either way. Bigger values raise UnsupportedTypeException,
+// like the other huge-object errors: encoding them would need a heap buffer
+// for the payload, and the byte-string header (whose length depends on it)
+// must be written first.
+#define CCBOR_MAX_BIGNUM_LIMBS (8)
+
 // Map keys that already exist as qstrs reuse them instead of allocating a
 // copy. Keys usually do: the application writes them as literals, which are
 // qstrs (msg["temp"]). Other strings are not looked up: a lookup that fails
@@ -151,7 +160,7 @@ static inline bool len_exceeds_u32(size_t n) {
 // Ext type registry (the ext_serializable decorator).
 //
 // umsgpack keeps three dicts: custom {user class: ext_type},
-// builtins {type: (packer class, ext_type)} and packers {ext_type: class}.
+// builtins {type: (packer class, tag number)} and tags {tag number: class}.
 // They are kept here as attributes of a heap module "_ccbor_ext" stored in
 // sys.modules: no root pointers are needed, and a soft reset (which empties
 // sys.modules) drops them together with the classes they refer to.
@@ -172,7 +181,7 @@ static mp_obj_t ext_registry(bool create) {
     mp_obj_t globals = MP_OBJ_FROM_PTR(mp_obj_module_get_globals(mod));
     mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_custom), mp_obj_new_dict(0));
     mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_builtins), mp_obj_new_dict(0));
-    mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_packers), mp_obj_new_dict(0));
+    mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_tags), mp_obj_new_dict(0));
     return mod;
 }
 
@@ -225,19 +234,121 @@ static bool kw_flag(mp_map_t *kw, qstr name) {
 }
 
 /******************************************************************************/
+// The Tag type (D2).
+//
+// A native type compatible with moat's Tag (Tag(tag, value=None), .tag,
+// .value, __eq__, __hash__, __repr__), and with cbor2's CBORTag. Unknown or
+// unregistered tag numbers decode to it; packing it emits the tag number
+// (mt6) followed by the packed value. Registered classes are dispatched by
+// isinstance, so a Tag instance is ALWAYS packed generically.
+
+typedef struct _mp_obj_tag_t {
+    mp_obj_base_t base;
+    mp_obj_t tag;    // an int, 0..2**64-1
+    mp_obj_t value;  // any object; None as the constructor default
+} mp_obj_tag_t;
+
+extern const mp_obj_type_t ccbor_tag_type;
+
+
+static mp_obj_t tag_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
+    mp_arg_check_num(n_args, n_kw, 1, 2, false);
+    if (!mp_obj_is_int(args[0])) {
+        mp_raise_TypeError(MP_ERROR_TEXT("Tag number is not type integer"));
+    }
+    // Range check: 0 <= tag <= 2**64-1. On longlong builds a Python int
+    // cannot even hold the top half, so the check reduces to >= 0 there.
+    if (mp_obj_int_sign(args[0]) < 0) {
+        mp_raise_ValueError(MP_ERROR_TEXT("Tag number is negative"));
+    }
+    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
+    if (!mp_obj_is_small_int(args[0])) {
+        const mpz_t *z = &((mp_obj_int_t *)MP_OBJ_TO_PTR(args[0]))->mpz;
+        if (z->len * MPZ_DIG_SIZE > 64) {
+            mp_raise_ValueError(MP_ERROR_TEXT("Tag number out of range"));
+        }
+    }
+    #endif
+    mp_obj_tag_t *o = mp_obj_malloc(mp_obj_tag_t, type);
+    o->tag = args[0];
+    o->value = n_args > 1 ? args[1] : mp_const_none;
+    return MP_OBJ_FROM_PTR(o);
+}
+
+static void tag_print(const mp_print_t *print, mp_obj_t self_in, mp_print_kind_t kind) {
+    mp_obj_tag_t *self = MP_OBJ_TO_PTR(self_in);
+    (void)kind;
+    mp_print_str(print, "Tag(");
+    mp_obj_print_helper(print, self->tag, PRINT_REPR);
+    mp_print_str(print, ", ");
+    mp_obj_print_helper(print, self->value, PRINT_REPR);
+    mp_print_str(print, ")");
+}
+
+static void tag_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
+    mp_obj_tag_t *self = MP_OBJ_TO_PTR(self_in);
+    if (attr == MP_QSTR_tag) {
+        dest[0] = self->tag;
+    } else if (attr == MP_QSTR_value) {
+        dest[0] = self->value;
+    }
+}
+
+static mp_obj_t tag_unary_op(mp_unary_op_t op, mp_obj_t self_in) {
+    mp_obj_tag_t *self = MP_OBJ_TO_PTR(self_in);
+    switch (op) {
+        case MP_UNARY_OP_BOOL:
+            return mp_const_true;
+        case MP_UNARY_OP_HASH: {
+            // moat: hash(tag) ^ hash(value); a value that cannot be
+            // hashed raises TypeError from mp_unary_op itself.
+            mp_obj_t ht = mp_unary_op(MP_UNARY_OP_HASH, self->tag);
+            mp_obj_t hv = mp_unary_op(MP_UNARY_OP_HASH, self->value);
+            return MP_OBJ_NEW_SMALL_INT(MP_OBJ_SMALL_INT_VALUE(ht) ^ MP_OBJ_SMALL_INT_VALUE(hv));
+        }
+        default:
+            return MP_OBJ_NULL;
+    }
+}
+
+static mp_obj_t tag_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
+    if (op != MP_BINARY_OP_EQUAL) {
+        return MP_OBJ_NULL;
+    }
+    if (!mp_obj_is_type(lhs_in, &ccbor_tag_type) || !mp_obj_is_type(rhs_in, &ccbor_tag_type)) {
+        return mp_const_false;
+    }
+    mp_obj_tag_t *lhs = MP_OBJ_TO_PTR(lhs_in);
+    mp_obj_tag_t *rhs = MP_OBJ_TO_PTR(rhs_in);
+    return mp_obj_new_bool(
+        mp_obj_equal(lhs->tag, rhs->tag) && mp_obj_equal(lhs->value, rhs->value));
+}
+
+MP_DEFINE_CONST_OBJ_TYPE(
+    ccbor_tag_type,
+    MP_QSTR_Tag,
+    MP_TYPE_FLAG_NONE,
+    make_new, tag_make_new,
+    print, tag_print,
+    attr, tag_attr,
+    unary_op, tag_unary_op,
+    binary_op, tag_binary_op
+    );
+
+/******************************************************************************/
 // Packing
 
 enum {
+    FPREC_NATIVE,   // the build's own width, but the smallest exact one (D5)
+    FPREC_HALF,
     FPREC_SINGLE,
     FPREC_DOUBLE,
-    FPREC_INVALID,
+    FPREC_INVALID,  // only an error when a float is actually packed
 };
 
 #if MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_DOUBLE
-#define FPREC_NATIVE FPREC_DOUBLE
 #define CCBOR_FLOAT_PRECISION MP_QSTR_double
 #else
-#define FPREC_NATIVE FPREC_SINGLE
 #define CCBOR_FLOAT_PRECISION MP_QSTR_single
 #endif
 
@@ -245,10 +356,11 @@ typedef struct _packer_t {
     vstr_t vstr;
     mp_map_t *kw;         // **options of dumps/dump
     mp_obj_t options;     // the same as a dict, built on first use
-    mp_map_t *builtins;   // registered built-in ext types, NULL if none
+    mp_map_t *builtins;   // registered built-in tag types, NULL if none
     mp_map_t *custom;     // registered user classes, NULL if none
     uint16_t depth;
     uint8_t fprec;
+    bool canonical;       // sort map keys like cbor2 (RFC 8949 4.2.3)
 } packer_t;
 
 static void pk_obj(packer_t *p, mp_obj_t o);
@@ -305,31 +417,46 @@ static void pk_hdr64(packer_t *p, byte tag, uint64_t x) {
     put_be64(b + 1, x);
 }
 
+// Major type mt (0..7) + argument x (0..2**64-1), then extra payload bytes.
+// Preferred (minimal) additional information, as RFC 8949 4.2.1 requires.
+static byte *pk_mt_hdr(packer_t *p, byte mt, uint64_t x, size_t extra) {
+    if (x < 24) {
+        byte *b = pk_reserve(p, 1 + extra);
+        b[0] = mt | (byte)x;
+        return b + 1;
+    }
+    if (x < 0x100) {
+        return pk_hdr(p, mt | 24, (uint32_t)x, 1, extra);
+    }
+    if (x < 0x10000) {
+        return pk_hdr(p, mt | 25, (uint32_t)x, 2, extra);
+    }
+    if (x <= 0xffffffff) {
+        return pk_hdr(p, mt | 26, (uint32_t)x, 4, extra);
+    }
+    pk_hdr64(p, mt | 27, x);
+    return pk_reserve(p, extra);
+}
+
+// mt0: 0 <= x <= 2**64-1.
+static void pk_uint64(packer_t *p, uint64_t x) {
+    pk_mt_hdr(p, 0x00, x, 0);
+}
+
+// mt1: -1 <= x <= -2**64, written as the argument n = -1 - x without
+// materialising a 65-bit magnitude (so that -2**64 works: n = 2**64-1).
+static void pk_negint64(packer_t *p, uint64_t n) {
+    pk_mt_hdr(p, 0x20, n, 0);
+}
+
+// An int that fits in 64 bits, signed.
 static void pk_int64(packer_t *p, int64_t x) {
     if (x >= 0) {
-        if (x < 0x80) {
-            pk_byte(p, (byte)x);
-        } else if (x < 0x100) {
-            pk_hdr(p, 0xcc, (uint32_t)x, 1, 0);
-        } else if (x < 0x10000) {
-            pk_hdr(p, 0xcd, (uint32_t)x, 2, 0);
-        } else if (x <= 0xffffffff) {
-            pk_hdr(p, 0xce, (uint32_t)x, 4, 0);
-        } else {
-            pk_hdr64(p, 0xcf, (uint64_t)x);
-        }
+        pk_uint64(p, (uint64_t)x);
     } else {
-        if (x >= -32) {
-            pk_byte(p, (byte)x);
-        } else if (x >= -128) {
-            pk_hdr(p, 0xd0, (uint32_t)x, 1, 0);
-        } else if (x >= -32768) {
-            pk_hdr(p, 0xd1, (uint32_t)x, 2, 0);
-        } else if (x >= -2147483647 - 1) {
-            pk_hdr(p, 0xd2, (uint32_t)x, 4, 0);
-        } else {
-            pk_hdr64(p, 0xd3, (uint64_t)x);
-        }
+        // -1 - x in uint64 arithmetic: x >= -2**63, so -1 - x <= 2**63 + ... < 2**64.
+        uint64_t n = ~(uint64_t)x; // ~x == -1 - x modulo 2**64
+        pk_negint64(p, n);
     }
 }
 
@@ -339,22 +466,94 @@ static void pk_bigint(packer_t *p, mp_obj_t o) {
     // Read the mpz digits directly. mp_obj_int_to_bytes_impl() with an
     // overflow check is not enough: it lets -2**64 through as 0.
     const mpz_t *z = &((mp_obj_int_t *)MP_OBJ_TO_PTR(o))->mpz;
-    uint64_t mag = 0;
-    for (size_t i = z->len; i--;) {
-        if (mag >> (64 - MPZ_DIG_SIZE)) {
-            raise_unsupported_msg(z->neg ? MP_ERROR_TEXT("huge signed int") : MP_ERROR_TEXT("huge unsigned int"));
+    // Bit length of the magnitude, and the low 64 bits. An mpz is
+    // normalised (no leading zero limbs), so the top limb is nonzero.
+    size_t nlimb = z->len;
+    while (nlimb > 0 && z->dig[nlimb - 1] == 0) {
+        nlimb--; // (defensive; a normalised mpz never needs this)
+    }
+    size_t topbits = 0;
+    for (mp_uint_t probe = (mp_uint_t)1 << (MPZ_DIG_SIZE - 1); probe != 0; probe >>= 1) {
+        if (z->dig[nlimb - 1] & probe) {
+            break;
         }
+        topbits++; // leading zeros of the top limb
+    }
+    size_t bits = nlimb * MPZ_DIG_SIZE - topbits; // bit length of |x|
+    uint64_t mag = 0;
+    for (size_t i = nlimb; i--;) {
         mag = (mag << MPZ_DIG_SIZE) | z->dig[i];
     }
-    if (z->neg) {
-        if (mag > 0x8000000000000000ULL) {
-            raise_unsupported_msg(MP_ERROR_TEXT("huge signed int"));
+    // mt0 covers 0 <= x <= 2**64-1 (bits <= 64);
+    // mt1 covers -2**64 <= x <= -1, i.e. magnitude <= 2**64: bits <= 64,
+    // or bits == 65 with only the top bit set (then the low 64 bits of
+    // the magnitude are all zero).
+    if (bits <= 64 || (z->neg && bits == 65 && mag == 0)) {
+        if (z->neg) {
+            // mt1 argument is -1 - x = mag - 1; for x == -2**64 it is
+            // exactly 2**64-1 (all ones).
+            uint64_t arg = (bits == 65) ? 0xffffffffffffffffULL : mag - 1;
+            pk_negint64(p, arg);
+        } else {
+            pk_uint64(p, mag);
         }
-        pk_int64(p, (int64_t)(0 - mag)); // mag == 2**63 gives INT64_MIN
-    } else if (mag < 0x8000000000000000ULL) {
-        pk_int64(p, (int64_t)mag);
-    } else {
-        pk_hdr64(p, 0xcf, mag);
+        return;
+    }
+    // Bignum: tag 2 (x > 2**64-1) or tag 3 (x < -2**64) followed by the
+    // big-endian MAGNITUDE as a byte string (RFC 8949 3.4.3). For tag 3
+    // the magnitude is the one of -1-x, i.e. mag-1, computed limb by
+    // limb with a borrow.
+    //
+    // The magnitude limbs go into a stack buffer; values this large are
+    // rare, and 4 limbs of 32 bits (16 of 16 bits) cover 128 bits.
+    // Larger values raise, like the other huge-object errors: encoding
+    // them would need a heap buffer for the payload, and the byte-string
+    // header (whose length depends on it) must be written first.
+    if (nlimb > CCBOR_MAX_BIGNUM_LIMBS) {
+        raise_unsupported_msg(z->neg ? MP_ERROR_TEXT("huge signed int") : MP_ERROR_TEXT("huge unsigned int"));
+    }
+    mpz_dig_t limbs[CCBOR_MAX_BIGNUM_LIMBS];
+    mp_uint_t borrow = z->neg ? 1 : 0; // subtract 1 from the magnitude if negative
+    for (size_t i = 0; i < nlimb; i++) {
+        mp_uint_t v = z->dig[i];
+        mp_uint_t nv = (v - borrow) & (((mp_uint_t)1 << MPZ_DIG_SIZE) - 1);
+        borrow = (v == 0 && borrow != 0) ? 1 : 0;
+        limbs[i] = (mpz_dig_t)nv;
+    }
+    // Skip leading zero limbs of the (possibly decremented) magnitude,
+    // then count bytes: nbytes = ceil(bits(mag)/8).
+    while (nlimb > 0 && limbs[nlimb - 1] == 0) {
+        nlimb--;
+    }
+    if (nlimb == 0) {
+        // The decrement emptied the magnitude: cannot happen here (the
+        // -2**64 case returned above), but keep the smallest correct form.
+        nlimb = 1;
+        limbs[0] = 0;
+    }
+    topbits = 0;
+    for (mp_uint_t probe = (mp_uint_t)1 << (MPZ_DIG_SIZE - 1); probe != 0; probe >>= 1) {
+        if (limbs[nlimb - 1] & probe) {
+            break;
+        }
+        topbits++;
+    }
+    bits = nlimb * MPZ_DIG_SIZE - topbits;
+    size_t nbytes = (bits + 7) / 8;
+    pk_mt_hdr(p, z->neg ? 0xc3 : 0xc2, 2, 0); // the tag head (number 2 or 3)
+    byte *payload = pk_mt_hdr(p, 0x40, nbytes, nbytes);
+    for (size_t i = 0; i < nbytes; i++) {
+        size_t bitpos = (nbytes - 1 - i) * 8; // bit offset of this byte from the LSB
+        size_t limb = bitpos / MPZ_DIG_SIZE;
+        unsigned shift = bitpos % MPZ_DIG_SIZE;
+        uint32_t val = 0;
+        if (limb < nlimb) {
+            val = (uint32_t)(limbs[limb] >> shift);
+            if (shift + 8 > MPZ_DIG_SIZE && limb + 1 < nlimb) {
+                val |= (uint32_t)limbs[limb + 1] << (MPZ_DIG_SIZE - shift);
+            }
+        }
+        payload[i] = (byte)val;
     }
     #elif MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_LONGLONG
     pk_int64(p, ((mp_obj_int_t *)MP_OBJ_TO_PTR(o))->val);
@@ -365,17 +564,121 @@ static void pk_bigint(packer_t *p, mp_obj_t o) {
 }
 
 #if MICROPY_PY_BUILTINS_FLOAT
+// IEEE 754 half-precision conversions. f16 <-> f32 bit manipulation
+// without any library float support (works on every build).
+static uint32_t f32_to_f16_bits(float f) {
+    uint32_t x;
+    memcpy(&x, &f, sizeof(x));
+    uint32_t sign = (x >> 16) & 0x8000;
+    int32_t exp = (int32_t)((x >> 23) & 0xff) - 127 + 15;
+    uint32_t man = x & 0x7fffff;
+    if (((x >> 23) & 0xff) == 0xff) {
+        // inf / NaN: keep the top 10 mantissa bits.
+        return sign | 0x7c00 | (man >> 13);
+    }
+    if (exp >= 0x1f) {
+        // overflow -> inf (round-to-nearest-even of huge values)
+        return sign | 0x7c00;
+    }
+    if (exp <= 0) {
+        // subnormal or zero: round the full 24-bit mantissa into the
+        // half subnormal range (10 bits starting at 2**-24).
+        if (exp < -10) {
+            return sign; // too small: rounds to zero (nearest-even)
+        }
+        uint32_t m = man | 0x800000; // implicit 1
+        uint32_t shift = (uint32_t)(14 - exp);
+        uint32_t half = 1u << (shift - 1);
+        uint32_t val = m >> shift;
+        if ((m & half) && ((m & (half - 1)) || ((val & 1) != 0))) {
+            val++;
+        }
+        return sign | val;
+    }
+    // Normal: round the 13 dropped mantissa bits to nearest-even.
+    uint32_t val = (uint32_t)(exp << 10) | (man >> 13);
+    uint32_t rem = man & 0x1fff;
+    if (rem > 0x1000 || (rem == 0x1000 && ((man >> 13) & 1))) {
+        val++;
+        if (val & 0x7c00) { // mantissa overflowed into the exponent
+            val = (uint32_t)(exp + 1) << 10;
+        }
+    }
+    return sign | val;
+}
+
+static float f16_bits_to_f32(uint32_t h) {
+    uint32_t sign = (h & 0x8000) << 16;
+    uint32_t exp = (h >> 10) & 0x1f;
+    uint32_t man = h & 0x3ff;
+    uint32_t x;
+    if (exp == 0) {
+        if (man == 0) {
+            x = sign;
+        } else {
+            // subnormal half -> normal single
+            exp = 127 - 15 + 1;
+            while ((man & 0x400) == 0) {
+                man <<= 1;
+                exp--;
+            }
+            man &= 0x3ff;
+            x = sign | (exp << 23) | (man << 13);
+        }
+    } else if (exp == 0x1f) {
+        x = sign | 0xff << 23 | (man << 13);
+    } else {
+        x = sign | ((exp - 15 + 127) << 23) | (man << 13);
+    }
+    float f;
+    memcpy(&f, &x, sizeof(f));
+    return f;
+}
+
+// The smallest float width that keeps the value exactly (D5), unless an
+// explicit force_float_precision was given. NaN always becomes f97e00
+// (its payload is not kept, like cbor2): it never compares equal, so it
+// must be special-cased before the exactness tests.
 static void pk_float(packer_t *p, mp_float_t f) {
-    if (p->fprec == FPREC_DOUBLE) {
-        double d = (double)f;
-        uint64_t u;
-        memcpy(&u, &d, sizeof(u));
-        pk_hdr64(p, 0xcb, u);
+    if (p->fprec == FPREC_NATIVE) {
+        double d = (double)f; // mp_float_t is float or double
+        uint64_t u64;
+        memcpy(&u64, &d, sizeof(u64));
+        if ((u64 & 0x7fffffffffffffffULL) > 0x7ff0000000000000ULL) {
+            pk_hdr(p, 0xf9, 0x7e00, 2, 0); // NaN -> f97e00
+            return;
+        }
+        // Exact as f16? (A value that overflows to inf in half precision
+        // is NOT exact: compare the round trip against the original.)
+        float f32 = (float)d;
+        uint32_t u32;
+        memcpy(&u32, &f32, sizeof(u32));
+        uint32_t h = f32_to_f16_bits(f32);
+        if ((double)f16_bits_to_f32(h) == d) {
+            pk_hdr(p, 0xf9, h, 2, 0);
+            return;
+        }
+        // Exact as f32?
+        if ((double)f32 == d) {
+            pk_hdr(p, 0xfa, u32, 4, 0);
+            return;
+        }
+        pk_hdr64(p, 0xfb, u64);
+    } else if (p->fprec == FPREC_HALF) {
+        float s = (float)f;
+        uint32_t u;
+        memcpy(&u, &s, sizeof(u));
+        pk_hdr(p, 0xf9, f32_to_f16_bits(s), 2, 0);
     } else if (p->fprec == FPREC_SINGLE) {
         float s = (float)f;
         uint32_t u;
         memcpy(&u, &s, sizeof(u));
-        pk_hdr(p, 0xca, u, 4, 0);
+        pk_hdr(p, 0xfa, u, 4, 0);
+    } else if (p->fprec == FPREC_DOUBLE) {
+        double d = (double)f;
+        uint64_t u;
+        memcpy(&u, &d, sizeof(u));
+        pk_hdr64(p, 0xfb, u);
     } else {
         mp_raise_ValueError(MP_ERROR_TEXT("invalid float precision"));
     }
@@ -383,50 +686,20 @@ static void pk_float(packer_t *p, mp_float_t f) {
 #endif
 
 static void pk_str(packer_t *p, const byte *s, size_t len) {
-    byte *b;
-    if (len < 32) {
-        b = pk_reserve(p, 1 + len);
-        *b++ = 0xa0 | (byte)len;
-    } else if (len < 0x100) {
-        b = pk_hdr(p, 0xd9, len, 1, len);
-    } else if (len < 0x10000) {
-        b = pk_hdr(p, 0xda, len, 2, len);
-    } else if (!len_exceeds_u32(len)) {
-        b = pk_hdr(p, 0xdb, len, 4, len);
-    } else {
-        raise_unsupported_msg(MP_ERROR_TEXT("huge string"));
-    }
+    byte *b = pk_mt_hdr(p, 0x60, len, len);
     memcpy(b, s, len);
 }
 
 static void pk_bin(packer_t *p, mp_obj_t o) {
     mp_buffer_info_t bi;
     mp_get_buffer_raise(o, &bi, MP_BUFFER_READ);
-    byte *b;
-    if (bi.len < 0x100) {
-        b = pk_hdr(p, 0xc4, bi.len, 1, bi.len);
-    } else if (bi.len < 0x10000) {
-        b = pk_hdr(p, 0xc5, bi.len, 2, bi.len);
-    } else if (!len_exceeds_u32(bi.len)) {
-        b = pk_hdr(p, 0xc6, bi.len, 4, bi.len);
-    } else {
-        raise_unsupported_msg(MP_ERROR_TEXT("huge binary string"));
-    }
+    byte *b = pk_mt_hdr(p, 0x40, bi.len, bi.len);
     memcpy(b, bi.buf, bi.len);
 }
 
-// Array (fix_base 0x90) and map (0x80) headers. umsgpack says "huge array"
-// for both, and so do we.
-static void pk_container_hdr(packer_t *p, size_t len, byte fix_base, byte tag16) {
-    if (len < 16) {
-        pk_byte(p, fix_base | (byte)len);
-    } else if (len < 0x10000) {
-        pk_hdr(p, tag16, len, 2, 0);
-    } else if (!len_exceeds_u32(len)) {
-        pk_hdr(p, tag16 + 1, len, 4, 0);
-    } else {
-        raise_unsupported_msg(MP_ERROR_TEXT("huge array"));
-    }
+// Array (mt4) and map (mt5) headers.
+static void pk_container_hdr(packer_t *p, byte mt, size_t len) {
+    pk_mt_hdr(p, mt, len, 0);
 }
 
 static void pk_enter(packer_t *p) {
@@ -437,7 +710,7 @@ static void pk_enter(packer_t *p) {
 }
 
 static void pk_tuple(packer_t *p, mp_obj_tuple_t *t) {
-    pk_container_hdr(p, t->len, 0x90, 0xdc);
+    pk_container_hdr(p, 0x80, t->len);
     pk_enter(p);
     for (size_t i = 0; i < t->len; i++) {
         pk_obj(p, t->items[i]);
@@ -445,12 +718,12 @@ static void pk_tuple(packer_t *p, mp_obj_tuple_t *t) {
     p->depth--;
 }
 
-// The list may change under us only if an ext packer (Python code) changes it.
+// The list may change under us only if a tag packb (Python code) changes it.
 // Items are re-read on every iteration and a size change is an error: the
 // header already written would no longer match.
 static void pk_list(packer_t *p, mp_obj_list_t *l) {
     size_t n = l->len;
-    pk_container_hdr(p, n, 0x90, 0xdc);
+    pk_container_hdr(p, 0x80, n);
     pk_enter(p);
     for (size_t i = 0; i < n; i++) {
         if (l->len != n) {
@@ -465,75 +738,166 @@ static void pk_list(packer_t *p, mp_obj_list_t *l) {
 }
 
 // Same order as `for k, v in d.items()`: the slots of the table in order.
+// With canonical=True the entries are sorted first, like cbor2 does: by
+// (length of the encoded key, then the encoded key bytes) - RFC 8949
 static void pk_map(packer_t *p, mp_obj_t d) {
     mp_map_t *map = mp_obj_dict_get_map(d);
     size_t n = map->used;
-    pk_container_hdr(p, n, 0x80, 0xde);
-    pk_enter(p);
+    // Collect the (key, value) pairs into a rooted list first: sorting
+    // reorders them, and a raw m_new() array would not be visible to the
+    // GC if Python code runs during key packing (a registered tag class
+    // used as a key, for instance). A list object is safe, and doubles
+    // as the buffer for the insertion sort.
+    mp_obj_t kv = mp_obj_new_list(2 * n, NULL);
+    mp_obj_t *items = ((mp_obj_list_t *)MP_OBJ_TO_PTR(kv))->items;
     size_t done = 0;
     for (size_t i = 0; i < map->alloc; i++) {
         if (mp_map_slot_is_filled(map, i)) {
-            if (done++ == n) {
+            if (done == n) {
                 raise_changed();
             }
-            mp_obj_t value = map->table[i].value;
-            pk_obj(p, map->table[i].key);
-            pk_obj(p, value);
+            items[2 * done] = map->table[i].key;
+            items[2 * done + 1] = map->table[i].value;
+            done++;
         }
     }
     if (done != n || map->used != n) {
         raise_changed();
     }
-    p->depth--;
-}
-
-// Ext header followed by the bytes returned by a packb() method.
-static void pk_ext(packer_t *p, mp_obj_t ext_type, mp_obj_t data) {
-    byte type = (byte)mp_obj_get_int(ext_type);
-    mp_buffer_info_t bi;
-    mp_get_buffer_raise(data, &bi, MP_BUFFER_READ);
-    size_t len = bi.len;
-    byte *b;
-    if (len == 1 || len == 2 || len == 4 || len == 8 || len == 16) {
-        static const byte fixext[17] = {
-            [1] = 0xd4, [2] = 0xd5, [4] = 0xd6, [8] = 0xd7, [16] = 0xd8,
-        };
-        b = pk_reserve(p, 2 + len);
-        b[0] = fixext[len];
-        b[1] = type;
-        b += 2;
-    } else if (len < 0x100) {
-        b = pk_hdr(p, 0xc7, len, 1, 1 + len);
-        *b++ = type;
-    } else if (len < 0x10000) {
-        b = pk_hdr(p, 0xc8, len, 2, 1 + len);
-        *b++ = type;
-    } else if (!len_exceeds_u32(len)) {
-        b = pk_hdr(p, 0xc9, len, 4, 1 + len);
-        *b++ = type;
-    } else {
-        raise_unsupported_msg(MP_ERROR_TEXT("huge ext data"));
+    if (p->canonical && n > 1) {
+        // Encode every key into a scratch buffer, sort the entry indices
+        // by (encoded length, encoded bytes) - RFC 8949 4.2.3's
+        // "length-first" order, which is what cbor2 6.1.2 implements
+        // (verified against it: -1 sorts before 24) - then emit. The
+        // scratch packer shares the options but has its own buffer.
+        packer_t kp;
+        vstr_init(&kp.vstr, 32);
+        kp.kw = p->kw;
+        kp.options = MP_OBJ_NULL;
+        kp.builtins = p->builtins;
+        kp.custom = p->custom;
+        kp.depth = 0;
+        kp.fprec = p->fprec;
+        kp.canonical = true;
+        // Each key's encoded range travels with its entry: keypos[i] is
+        // the start and keylen[i] the length of the bytes of the key now
+        // at position i. (Deriving lengths from consecutive offsets would
+        // break as soon as the order is permuted.)
+        size_t *keypos = m_new(size_t, n);
+        size_t *keylen = m_new(size_t, n);
+        for (size_t i = 0; i < n; i++) {
+            keypos[i] = kp.vstr.len;
+            pk_obj(&kp, items[2 * i]);
+            keylen[i] = kp.vstr.len - keypos[i];
+        }
+        // Insertion sort of the entries by (key length, key bytes): maps
+        // are usually small, and this needs no callback context.
+        for (size_t i = 1; i < n; i++) {
+            size_t o = keypos[i];
+            size_t olen = keylen[i];
+            mp_obj_t k = items[2 * i];
+            mp_obj_t v = items[2 * i + 1];
+            size_t j = i;
+            while (j > 0) {
+                size_t plen = keylen[j - 1];
+                const byte *a = (const byte *)kp.vstr.buf + keypos[j - 1];
+                const byte *b = (const byte *)kp.vstr.buf + o;
+                int cmp;
+                if (plen != olen) {
+                    cmp = plen < olen ? -1 : 1;
+                } else {
+                    cmp = memcmp(a, b, plen);
+                }
+                if (cmp <= 0) {
+                    break;
+                }
+                // shift the entry at j-1 right to j
+                keypos[j] = keypos[j - 1];
+                keylen[j] = keylen[j - 1];
+                items[2 * j] = items[2 * (j - 1)];
+                items[2 * j + 1] = items[2 * (j - 1) + 1];
+                j--;
+            }
+            keypos[j] = o;
+            keylen[j] = olen;
+            items[2 * j] = k;
+            items[2 * j + 1] = v;
+        }
+        m_del(size_t, keypos, n);
+        m_del(size_t, keylen, n);
+        vstr_clear(&kp.vstr);
     }
-    memcpy(b, bi.buf, len);
+    pk_container_hdr(p, 0xa0, n);
+    pk_enter(p);
+    for (size_t i = 0; i < n; i++) {
+        pk_obj(p, items[2 * i]);
+        pk_obj(p, items[2 * i + 1]);
+    }
+    p->depth--;
 }
 
 static inline bool is_instance(mp_obj_t o, mp_obj_t type) {
     return mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(mp_obj_get_type(o)), type);
 }
 
-// A registered built-in type (e.g. complex, set, tuple) has priority over the
-// native encodings, as in umsgpack. Returns false if o has no ext packer.
+// Tag number of a Tag object, as uint64. The Python-visible .tag is an
+// int; values above 2**63-1 only exist on builds with bigger ints (on
+// longlong builds the constructor rejects them).
+// A tag number given as a Python int, as uint64 (0..2**64-1). Rejects
+// negatives; on longlong builds values above 2**63-1 cannot exist.
+static uint64_t tag_number(mp_obj_t t) {
+    if (mp_obj_is_small_int(t)) {
+        mp_int_t v = MP_OBJ_SMALL_INT_VALUE(t);
+        if (v < 0) {
+            mp_raise_ValueError(MP_ERROR_TEXT("Tag number is negative"));
+        }
+        return (uint64_t)v;
+    }
+    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
+    {
+        const mpz_t *z = &((mp_obj_int_t *)MP_OBJ_TO_PTR(t))->mpz;
+        if (z->neg || z->len * MPZ_DIG_SIZE > 64) {
+            mp_raise_ValueError(MP_ERROR_TEXT("Tag number out of range"));
+        }
+        uint64_t u = 0;
+        for (size_t i = z->len; i--;) {
+            u = (u << MPZ_DIG_SIZE) | z->dig[i];
+        }
+        return u;
+    }
+    #else
+    mp_raise_ValueError(MP_ERROR_TEXT("Tag number out of range"));
+    #endif
+}
+
+// Tag header (mt6) followed by the packed content: a Tag instance packs
+// generically (D2), a registered class's packb() result packs as the
+// content (D1: the content is a CBOR item, not raw bytes).
+static void pk_tag(packer_t *p, mp_obj_t tag_num, mp_obj_t content) {
+    uint64_t n = tag_number(tag_num);
+    // Tags count towards the depth limit (review point 8): a packb()
+    // that returns its own class, or nested Tags, must not recurse for
+    // ever, and a chain of tags costs C stack per level.
+    pk_enter(p);
+    pk_mt_hdr(p, 0xc0, n, 0);
+    pk_obj(p, content);
+    p->depth--;
+}
+
+// A registered built-in type (e.g. complex, set, tuple) has priority over
+// the native encodings, as in umsgpack. Returns false if o has no tag
+// packer. The packb() result is packed as the tag CONTENT (D1).
 static bool pk_builtin_ext(packer_t *p, mp_obj_t o) {
     mp_map_t *map = p->builtins;
     for (size_t i = 0; i < map->alloc; i++) {
         if (!mp_map_slot_is_filled(map, i) || !is_instance(o, map->table[i].key)) {
             continue;
         }
-        // value is (packer class, ext_type)
+        // value is (packer class, tag number)
         size_t n;
         mp_obj_t *pair;
         mp_obj_tuple_get(map->table[i].value, &n, &pair);
-        mp_obj_t ext_type = pair[1];
+        mp_obj_t tag_num = pair[1];
         mp_obj_t dest[4];
         mp_load_method_maybe(pair[0], MP_QSTR_packb, dest);
         if (dest[0] == MP_OBJ_NULL) {
@@ -542,26 +906,26 @@ static bool pk_builtin_ext(packer_t *p, mp_obj_t o) {
         }
         dest[2] = o;
         dest[3] = options_dict(&p->options, p->kw);
-        pk_ext(p, ext_type, mp_call_method_n_kw(2, 0, dest));
+        pk_tag(p, tag_num, mp_call_method_n_kw(2, 0, dest));
         return true;
     }
     return false;
 }
 
-// Last chance: an instance of a class registered with @ext_serializable(n).
+// Last chance: an instance of a class registered with @tag_serializable(n).
 static void pk_custom_ext(packer_t *p, mp_obj_t o) {
     mp_map_t *map = p->custom;
     for (size_t i = 0; map != NULL && i < map->alloc; i++) {
         if (!mp_map_slot_is_filled(map, i) || !is_instance(o, map->table[i].key)) {
             continue;
         }
-        mp_obj_t ext_type = map->table[i].value;
+        mp_obj_t tag_num = map->table[i].value;
         mp_obj_t dest[2];
         mp_load_method_maybe(o, MP_QSTR_packb, dest);
         if (dest[0] == MP_OBJ_NULL) {
             break;
         }
-        pk_ext(p, ext_type, mp_call_method_n_kw(0, 0, dest));
+        pk_tag(p, tag_num, mp_call_method_n_kw(0, 0, dest));
         return;
     }
     raise_unsupported_type(o);
@@ -603,7 +967,11 @@ static void pk_subclass(packer_t *p, mp_obj_t o, const mp_obj_type_t *type) {
 
 static void pk_obj(packer_t *p, mp_obj_t o) {
     if (o == mp_const_none) {
-        pk_byte(p, 0xc0);
+        pk_byte(p, 0xf6);
+        return;
+    }
+    if (o == MP_OBJ_FROM_PTR(&mp_const_ellipsis_obj)) {
+        pk_byte(p, 0xf7);
         return;
     }
     if (p->builtins != NULL && pk_builtin_ext(p, o)) {
@@ -616,9 +984,9 @@ static void pk_obj(packer_t *p, mp_obj_t o) {
         const byte *s = qstr_data(MP_OBJ_QSTR_VALUE(o), &len);
         pk_str(p, s, len);
     } else if (o == mp_const_false) {
-        pk_byte(p, 0xc2);
+        pk_byte(p, 0xf4);
     } else if (o == mp_const_true) {
-        pk_byte(p, 0xc3);
+        pk_byte(p, 0xf5);
         #if MICROPY_PY_BUILTINS_FLOAT
     } else if (mp_obj_is_float(o)) {
         pk_float(p, mp_obj_float_get(o));
@@ -628,6 +996,10 @@ static void pk_obj(packer_t *p, mp_obj_t o) {
         if (type == &mp_type_str) {
             GET_STR_DATA_LEN(o, s, len);
             pk_str(p, s, len);
+        } else if (type == &ccbor_tag_type) {
+            // A Tag instance packs generically (D2): number + content.
+            mp_obj_tag_t *t = MP_OBJ_TO_PTR(o);
+            pk_tag(p, t->tag, t->value);
         } else if (type == &mp_type_dict
                    #if MICROPY_PY_COLLECTIONS_ORDEREDDICT
                    || type == &mp_type_ordereddict
@@ -658,12 +1030,15 @@ static void packer_init(packer_t *p, mp_map_t *kw) {
     p->options = MP_OBJ_NULL;
     p->depth = 0;
     p->fprec = FPREC_NATIVE;
+    p->canonical = kw_flag(kw, MP_QSTR_canonical);
     mp_obj_t prec = kw_get(kw, MP_QSTR_force_float_precision);
     if (prec != MP_OBJ_NULL) {
         if (mp_obj_equal(prec, MP_OBJ_NEW_QSTR(MP_QSTR_double))) {
             p->fprec = FPREC_DOUBLE;
         } else if (mp_obj_equal(prec, MP_OBJ_NEW_QSTR(MP_QSTR_single))) {
             p->fprec = FPREC_SINGLE;
+        } else if (mp_obj_equal(prec, MP_OBJ_NEW_QSTR(MP_QSTR_half))) {
+            p->fprec = FPREC_HALF;
         } else {
             // Like umsgpack, only an error if a float is actually packed.
             p->fprec = FPREC_INVALID;
@@ -738,7 +1113,7 @@ typedef struct _unpacker_t {
     mp_obj_t stream;
     const mp_stream_p_t *sp; // NULL: use the read method instead
     mp_obj_t read_meth[3];
-    mp_map_t *packers;       // registered ext types, NULL if none
+    mp_map_t *tags;          // registered tag types, NULL if none
     mp_map_t *kw;            // **options, for the ext unpackb methods
     mp_obj_t options;
     uint16_t depth;
@@ -906,8 +1281,8 @@ static mp_obj_t up_ext(unpacker_t *u, size_t n) {
     mp_int_t ext_type = (int8_t)up_read(u, 1)[0];
     mp_obj_t data = up_bin(u, n);
     mp_map_elem_t *e = NULL;
-    if (u->packers != NULL) {
-        e = mp_map_lookup(u->packers, MP_OBJ_NEW_SMALL_INT(ext_type), MP_MAP_LOOKUP);
+    if (u->tags != NULL) {
+        e = mp_map_lookup(u->tags, MP_OBJ_NEW_SMALL_INT(ext_type), MP_MAP_LOOKUP);
     }
     if (e == NULL) {
         // Same text as umsgpack's f"ext_type: 0x{ext_type:0X}"
@@ -1178,7 +1553,7 @@ static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
     u->use_tuple = kw_flag(kw, MP_QSTR_use_tuple);
     u->use_ordered_dict = kw_flag(kw, MP_QSTR_use_ordered_dict);
     u->allow_invalid_utf8 = kw_flag(kw, MP_QSTR_allow_invalid_utf8);
-    u->packers = ext_map(MP_QSTR_packers);
+    u->tags = ext_map(MP_QSTR_tags);
 }
 
 static void unpacker_set_buffer(unpacker_t *u, mp_obj_t src, const byte *buf, size_t len) {
@@ -1501,30 +1876,51 @@ static MP_DEFINE_CONST_OBJ_TYPE(
     );
 
 /******************************************************************************/
-// ext_serializable(ext_type, example=None): class decorator.
+// tag_serializable(tag_number, example=None): class decorator.
+//
+// Registers a class for a CBOR tag number (0..2**64-1; tags 2 and 3 are
+// the native bignum tags and are rejected). With example= a built-in type
+// is registered instead: its instances (and instances of its subclasses)
+// pack through the class's packb(obj, options), like umsgpack's ext mechanism.
 
-static mp_obj_t ext_register(size_t n_args, const mp_obj_t *args) {
-    // args: ext_type, example (closed over by the decorator), cls
-    mp_obj_t ext_type = args[0];
+static mp_obj_t tag_register(size_t n_args, const mp_obj_t *args) {
+    // args: tag_number, example (closed over by the decorator), cls
+    mp_obj_t tag_num = args[0];
     mp_obj_t example = args[1];
     mp_obj_t cls = args[2];
-    if (!mp_obj_is_int(ext_type)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("Ext type is not type integer"));
+    if (!mp_obj_is_int(tag_num)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("Tag number is not type integer"));
     }
-    mp_int_t t = mp_obj_is_small_int(ext_type) ? MP_OBJ_SMALL_INT_VALUE(ext_type) : 1000;
-    if (t < -128 || t > 127) {
-        raise_with_obj(&mp_type_ValueError, "Ext type value ", ext_type, PRINT_STR,
-            " is out of range of -128 to 127");
+    // The number must be 0..2**64-1; on longlong builds an int cannot
+    // exceed 2**63-1, so >= 0 suffices there. Same rule as Tag().
+    if (mp_obj_int_sign(tag_num) < 0) {
+        raise_with_obj(&mp_type_ValueError, "Tag number ", tag_num, PRINT_STR,
+            " is negative");
+    }
+    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
+    if (!mp_obj_is_small_int(tag_num)
+        && ((mp_obj_int_t *)MP_OBJ_TO_PTR(tag_num))->mpz.len * MPZ_DIG_SIZE > 64) {
+        raise_with_obj(&mp_type_ValueError, "Tag number ", tag_num, PRINT_STR,
+            " is out of range of 0 to 2**64-1");
+    }
+    #endif
+    // Tags 2 and 3 are the native bignum tags: registering them is an error
+    // (the decoder always converts them to int).
+    if (mp_obj_is_small_int(tag_num)
+        && (MP_OBJ_SMALL_INT_VALUE(tag_num) == 2 || MP_OBJ_SMALL_INT_VALUE(tag_num) == 3)) {
+        mp_raise_ValueError(MP_ERROR_TEXT("tag 2 and 3 are the native bignum tags"));
     }
     mp_obj_t reg = ext_registry(true);
-    mp_obj_t packers = ext_dict(reg, MP_QSTR_packers);
+    mp_obj_t tags = ext_dict(reg, MP_QSTR_tags);
     mp_obj_t custom = ext_dict(reg, MP_QSTR_custom);
-    mp_map_elem_t *e = mp_map_lookup(mp_obj_dict_get_map(packers), ext_type, MP_MAP_LOOKUP);
+    mp_map_elem_t *e = mp_map_lookup(mp_obj_dict_get_map(tags), tag_num, MP_MAP_LOOKUP);
     if (e != NULL) {
         vstr_t vstr;
         mp_print_t print;
         vstr_init_print(&vstr, 48, &print);
-        mp_printf(&print, "Ext type %d already registered with class ", (int)t);
+        mp_print_str(&print, "Tag number ");
+        mp_obj_print_helper(&print, tag_num, PRINT_STR);
+        mp_print_str(&print, " already registered with class ");
         mp_obj_print_helper(&print, e->value, PRINT_REPR);
         nlr_raise(mp_obj_new_exception_arg1(&mp_type_ValueError, mp_obj_new_str_from_vstr(&vstr)));
     }
@@ -1534,25 +1930,26 @@ static mp_obj_t ext_register(size_t n_args, const mp_obj_t *args) {
         vstr_init_print(&vstr, 48, &print);
         mp_print_str(&print, "Class ");
         mp_obj_print_helper(&print, cls, PRINT_REPR);
-        mp_printf(&print, " already registered with Ext type %d", (int)t);
+        mp_print_str(&print, " already registered with tag number ");
+        mp_obj_print_helper(&print, tag_num, PRINT_STR);
         nlr_raise(mp_obj_new_exception_arg1(&mp_type_ValueError, mp_obj_new_str_from_vstr(&vstr)));
     }
-    mp_obj_dict_store(packers, ext_type, cls);
+    mp_obj_dict_store(tags, tag_num, cls);
     if (example == mp_const_none) {
-        mp_obj_dict_store(custom, cls, ext_type);
+        mp_obj_dict_store(custom, cls, tag_num);
     } else {
-        mp_obj_t pair[2] = { cls, ext_type };
+        mp_obj_t pair[2] = { cls, tag_num };
         mp_obj_dict_store(ext_dict(reg, MP_QSTR_builtins), example, mp_obj_new_tuple(2, pair));
     }
     return cls;
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ext_register_obj, 3, 3, ext_register);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(tag_register_obj, 3, 3, tag_register);
 
-static mp_obj_t ccbor_ext_serializable(size_t n_args, const mp_obj_t *args) {
+static mp_obj_t ccbor_tag_serializable(size_t n_args, const mp_obj_t *args) {
     mp_obj_t closed[2] = { args[0], n_args > 1 ? args[1] : mp_const_none };
-    return mp_obj_new_closure(MP_OBJ_FROM_PTR(&ext_register_obj), 2, closed);
+    return mp_obj_new_closure(MP_OBJ_FROM_PTR(&tag_register_obj), 2, closed);
 }
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ccbor_ext_serializable_obj, 1, 2, ccbor_ext_serializable);
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ccbor_tag_serializable_obj, 1, 2, ccbor_tag_serializable);
 
 /******************************************************************************/
 // Module
@@ -1561,7 +1958,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ccbor_ext_serializable_obj, 1, 2, ccb
 // exposes them) and ALoader, which is Python code in ccbor_aio.py.
 static mp_obj_t ccbor___getattr__(mp_obj_t attr) {
     qstr name = mp_obj_str_get_qstr(attr);
-    if (name == MP_QSTR_custom || name == MP_QSTR_builtins || name == MP_QSTR_packers) {
+    if (name == MP_QSTR_custom || name == MP_QSTR_builtins || name == MP_QSTR_tags) {
         return ext_dict(ext_registry(true), name);
     }
     if (name == MP_QSTR_ALoader) {
@@ -1583,7 +1980,8 @@ static const mp_rom_map_elem_t ccbor_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_loads), MP_ROM_PTR(&ccbor_loads_obj) },
     { MP_ROM_QSTR(MP_QSTR_load), MP_ROM_PTR(&ccbor_load_obj) },
     { MP_ROM_QSTR(MP_QSTR_Unpacker), MP_ROM_PTR(&ccbor_unpacker_type) },
-    { MP_ROM_QSTR(MP_QSTR_ext_serializable), MP_ROM_PTR(&ccbor_ext_serializable_obj) },
+    { MP_ROM_QSTR(MP_QSTR_Tag), MP_ROM_PTR(&ccbor_tag_type) },
+    { MP_ROM_QSTR(MP_QSTR_tag_serializable), MP_ROM_PTR(&ccbor_tag_serializable_obj) },
     { MP_ROM_QSTR(MP_QSTR_float_precision), MP_ROM_QSTR(CCBOR_FLOAT_PRECISION) },
     { MP_ROM_QSTR(MP_QSTR_PackException), MP_ROM_PTR(&mp_type_ccbor_PackException) },
     { MP_ROM_QSTR(MP_QSTR_UnpackException), MP_ROM_PTR(&mp_type_ccbor_UnpackException) },

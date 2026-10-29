@@ -1,5 +1,1 @@
-True
-(1, (2,)) 5
-EOFError
-True True True 8
-EOFError inside an object
+SKIP

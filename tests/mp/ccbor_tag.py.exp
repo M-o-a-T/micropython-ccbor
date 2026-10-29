@@ -1,0 +1,33 @@
+0 d040 True
+1 d04178 True
+2 d0427879 True
+3 d083010203 True
+4 d0a1616b6176 True
+5 d0182a True
+6 d06474657874 True
+7 d0f6 True
+d18122 True
+True
+True
+[('canonical', True), ('custom_option', 7)]
+[16, 17, 18, 80, 82]
+16 80
+ValueError Tag number 16 already registered with class <class 'Blob'>
+ValueError Class <class 'Blob'> already registered with tag number 19
+ValueError tag 2 and 3 are the native bignum tags
+ValueError tag 2 and 3 are the native bignum tags
+ValueError Tag number -1 is negative
+ValueError Tag number 18446744073709551616 is out of range of 0 to 2**64-1
+TypeError Tag number is not type integer
+UnsupportedTypeException <class 'NoMethods'>
+UnsupportedTypeException <class 'object'>
+Tag(1, 2)
+5 None
+True False
+True
+c102
+True
+v
+TypeError Tag number is not type integer
+ValueError Tag number is negative
+ValueError Tag number out of range

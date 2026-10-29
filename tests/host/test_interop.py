@@ -1,14 +1,22 @@
-"""Interoperability with msgpack-python, the reference implementation of
-MessagePack for CPython: data packed by one side must unpack on the other."""
+"""Interoperability with cbor2, the reference implementation for CPython:
+data packed by one side must unpack on the other.
+
+Rewritten in phase 5 against cbor2 (the msgpack-python version below kept
+as the reference shape). Until the CBOR decoder (phase 3) and the cbor2
+harness (phase 5) land, these tests are skipped.
+"""
 
 import math
 import random
 import struct
 
-import msgpack
 import pytest
 
 from conftest import run_mp
+
+pytest.skip("phase 5: rewritten against cbor2", allow_module_level=True)
+
+import msgpack  # noqa: E402
 
 # Records are length-prefixed binary (4 bytes, big endian), not text lines:
 # reading very long lines is slow on MicroPython.

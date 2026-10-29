@@ -1,64 +1,91 @@
 ok None
 ok False
 ok True
+ok Ellipsis
 ok 0
 ok 1
-ok 127
-ok 128
+ok 10
+ok 23
+ok 24
+ok 25
+ok 100
 ok 255
 ok 256
+ok 1000
 ok 65535
 ok 65536
-ok 2147483647
-ok 2147483648
 ok 4294967295
 ok 4294967296
-ok 9223372036854775807
-ok 9223372036854775808
 ok 18446744073709551615
+ok 18446744073709551616
+ok 1267650600228229401496703205376
 ok -1
-ok -32
-ok -33
-ok -128
-ok -129
-ok -32768
-ok -32769
-ok -2147483648
-ok -2147483649
-ok -9223372036854775808
-ok 1.5
-ok 1.5
+ok -10
+ok -24
+ok -25
+ok -100
+ok -255
+ok -256
+ok -257
+ok -1000
+ok -65536
+ok -65537
+ok -4294967296
+ok -4294967297
+ok -18446744073709551616
+ok -18446744073709551617
+ok -1267650600228229401496703205376
+ok 0.0
 ok -0.0
+ok 1.0
+ok -1.0
+ok 0.5
+ok 1.5
+ok 2.5
+ok -4.0
+ok 65504.0
+ok 10000000000.0
+ok 100000.0
+ok 1e+100
+ok 1.1e-08
 ok inf
 ok -inf
-True
-True
+ok nan
+ok nan
+ok 1.5
+ok 1.5
+ok 1.5
+ok 1
+ok
 ok ''
 ok 'a'
-ok 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-ok 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+ok 'IETF'
+ok 'ü'
+ok 'aaaaaaaaaaaaaaaaaaaaaaa'
+ok 'aaaaaaaaaaaaaaaaaaaaaaaa'
 ok 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 ok 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-ok 'é'
-ok '€'
-ok '😀'
-ok 'éééééééééééééééé'
 ok b''
-ok b'\x00\xff'
+ok b'\x01\x02\x03\x04'
+ok b'xxxxxxxxxxxxxxxxxxxxxxx'
+ok b'xxxxxxxxxxxxxxxxxxxxxxxx'
 ok b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-ok b'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-ok bytearray(b'\x01\x02')
 ok []
 ok [1, 2, 3]
-ok (1, 2, 3)
-ok [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-ok [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+ok [1, [2, 3], [4, 5]]
+ok [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1
+ok [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1
+ok [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1
 ok {}
-ok {'a': 1}
-ok {1: None}
-True 31
-True 35
-ok [1, [2, [3, {}]]]
-ok {'k': [True, None, {'x': b'\x00'}]}
-41
-True
+ok {3: 4, 1: 2}
+ok {'a': 1, 'b': [2, 3]}
+ok {'b': 'B', 'd': 'D', 'a': 'A', 'e': 'E',
+ok {24: 0, -1: 0}
+ok {'aa': 1, 'b': 2}
+ok Tag(1, 1363896240)
+ok Tag(32, 'a')
+ok Tag(55799, 1)
+ok Tag(0, 0)
+ok Tag(2, b'')
+ok Tag(1, Tag(2, Tag(3, 1)))
+done
