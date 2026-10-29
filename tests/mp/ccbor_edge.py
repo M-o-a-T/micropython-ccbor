@@ -1,7 +1,3 @@
-# SKIP: the decoder is still MessagePack; phase 3 (CBOR unpacker) rewrites this test
-print("SKIP")
-raise SystemExit
-
 # Edge cases of the API, mostly error paths, found with the coverage build.
 try:
     import ccbor
@@ -40,8 +36,8 @@ class Reader:
         return out + self.extra
 
 
-show(m.load, Reader(b"\x92\x01"))
-show(m.load, Reader(b"\x92\x01\x02", extra=b"!"))
+show(m.load, Reader(b"\x82\x01"))
+show(m.load, Reader(b"\x82\x01\x02", extra=b"!"))
 
 
 # I/O errors of native streams are OSError. Some filesystems (littlefs on the
@@ -70,7 +66,7 @@ except OSError:
 
 
 # a list that grows while it is packed (by an ext packb), not at the end
-@m.ext_serializable(0x60)
+@m.tag_serializable(0x60)
 class Grow:
     def __init__(self, target):
         self.target = target
@@ -87,7 +83,7 @@ show(m.dumps, lst)
 
 
 # a dict that grows while it is packed
-@m.ext_serializable(0x61)
+@m.tag_serializable(0x61)
 class GrowDict:
     def __init__(self, target):
         self.target = target
@@ -105,15 +101,15 @@ show(m.dumps, d)
 # the registry module replaced in sys.modules is rebuilt; broken dicts are an error
 reg = sys.modules["_ccbor_ext"]
 sys.modules["_ccbor_ext"] = 1
-m.ext_serializable(0x62)(type("Fresh", (), {}))
-print(sorted(m.packers))
-sys.modules["_ccbor_ext"].packers = 1
-show(m.loads, b"\xd4\x62\x00")
+m.tag_serializable(0x62)(type("Fresh", (), {}))
+print(sorted(int(k) for k in m.tags))
+sys.modules["_ccbor_ext"].tags = 1
+show(m.loads, b"\xd8\x62\xf6")
 sys.modules["_ccbor_ext"] = reg
 
 # iterating an Unpacker again without feeding it, and other operations
 u = m.Unpacker()
-u.feed(b"\x92")
+u.feed(b"\x82")
 print(list(u), list(u), len(u))
 print(type(hash(u)) is int)
 show(lambda: -u)

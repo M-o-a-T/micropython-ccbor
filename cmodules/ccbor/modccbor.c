@@ -58,6 +58,7 @@
 #include "py/objlist.h"
 #include "py/objmodule.h"
 #include "py/objstr.h"
+#include "py/smallint.h"
 #include "py/objtuple.h"
 #include "py/objtype.h"
 #include "py/stackctrl.h"
@@ -107,12 +108,27 @@ CCBOR_EXCEPTION(UnpackException, mp_type_Exception);
 CCBOR_EXCEPTION(UnsupportedTypeException, mp_type_ccbor_PackException);
 CCBOR_EXCEPTION(InsufficientDataException, mp_type_ccbor_UnpackException);
 CCBOR_EXCEPTION(InvalidStringException, mp_type_ccbor_UnpackException);
-CCBOR_EXCEPTION(ReservedCodeException, mp_type_ccbor_UnpackException);
+CCBOR_EXCEPTION(InvalidCodeException, mp_type_ccbor_UnpackException);
 CCBOR_EXCEPTION(UnhashableKeyException, mp_type_ccbor_UnpackException);
 CCBOR_EXCEPTION(DuplicateKeyException, mp_type_ccbor_UnpackException);
 
 static MP_NORETURN void raise_insufficient(void) {
     mp_raise_type(&mp_type_ccbor_InsufficientDataException);
+}
+
+// A not-well-formed code: additional info 28-30 anywhere, indefinite length
+// where it is invalid (mt0/mt1/mt6), a stray BREAK, a bad indefinite-string
+// chunk, or a 1-byte simple value below 20 (D7).
+static MP_NORETURN void raise_invalid_code(byte ic) {
+    mp_raise_msg_varg(&mp_type_ccbor_InvalidCodeException,
+        MP_ERROR_TEXT("invalid code 0x%02x"), ic);
+}
+
+// An unassigned simple value: 0..19 (0xe0-0xf3) or 1-byte 32..255
+// (f8 20..f8 ff): well-formed CBOR, but we do not support them (D3).
+static MP_NORETURN void raise_unsupported_simple(unsigned sv) {
+    mp_raise_msg_varg(&mp_type_ccbor_UnsupportedTypeException,
+        MP_ERROR_TEXT("unsupported simple value %u"), sv);
 }
 
 static MP_NORETURN void raise_depth(void) {
@@ -832,6 +848,11 @@ static void pk_map(packer_t *p, mp_obj_t d) {
     for (size_t i = 0; i < n; i++) {
         pk_obj(p, items[2 * i]);
         pk_obj(p, items[2 * i + 1]);
+        // A tag packb (Python) may have run: the map must still have
+        // exactly n entries, or the header already written is wrong.
+        if (map->used != n) {
+            raise_changed();
+        }
     }
     p->depth--;
 }
@@ -1121,6 +1142,7 @@ typedef struct _unpacker_t {
     bool use_ordered_dict;
     bool allow_invalid_utf8;
     bool key; // the object being decoded is a map key
+    uint16_t indef; // open indefinite containers (BREAK is valid if > 0)
     byte hdr[8];
 } unpacker_t;
 
@@ -1277,33 +1299,155 @@ static void up_revalidate(unpacker_t *u) {
     u->end = u->base + end;
 }
 
-static mp_obj_t up_ext(unpacker_t *u, size_t n) {
-    mp_int_t ext_type = (int8_t)up_read(u, 1)[0];
-    mp_obj_t data = up_bin(u, n);
+// An int from up to 8 big-endian bytes: 0..2**64-1. On builds without
+// big ints (MICROPY_LONGINT_IMPL_NONE) values above the small-int range
+// raise (the same way as msgpackc's int64 paths did); on longlong builds
+// 2**63..2**64-1 cannot be an int and are wrapped in Tag by the caller
+// (D4); on mpz builds they become big ints.
+static mp_obj_t up_uint64_obj(uint64_t x) {
+    if (x <= (uint64_t)MP_SMALL_INT_MAX) {
+        return MP_OBJ_NEW_SMALL_INT((mp_int_t)x);
+    }
+    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
+    return mp_obj_new_int_from_ull(x);
+    #elif MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_LONGLONG
+    if (x <= 0x7fffffffffffffffULL) {
+        return mp_obj_new_int_from_ll((long long)x);
+    }
+    return MP_OBJ_NULL; // caller wraps in Tag (D4)
+    #else
+    raise_unsupported_msg(MP_ERROR_TEXT("int too large for this build"));
+    #endif
+}
+
+// -1-n for an mt1 argument n: the result is -1..-2**64. Small ints cover
+// -1..-2**30ish on every build; on longlong builds values below LONG_LONG_MIN
+// cannot be an int and the caller wraps the ORIGINAL argument in Tag(3, ...)
+// (D4); on mpz builds the bignum path handles everything.
+static mp_obj_t up_negint_obj(uint64_t n) {
+    if (n <= (uint64_t)MP_SMALL_INT_MAX) {
+        return MP_OBJ_NEW_SMALL_INT(-1 - (mp_int_t)n);
+    }
+    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_LONGLONG
+    if (n < 0x8000000000000000ULL) {
+        return mp_obj_new_int_from_ll(-1 - (long long)n);
+    }
+    return MP_OBJ_NULL; // caller wraps in Tag (D4)
+    #elif MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
+    if (n < 0x8000000000000000ULL) {
+        return mp_obj_new_int_from_ll(-1 - (long long)n);
+    }
+    // The value is -1-n, i.e. the NEGATIVE of the magnitude (n+1), which
+    // is 2**63..2**64 here. n+1 overflows uint64 only when n == 2**64-1
+    // (then the magnitude is exactly 2**64: 01 00..00).
+    byte mag[9];
+    mag[0] = n == 0xffffffffffffffffULL ? 1 : 0;
+    put_be64(mag + 1, n + 1); // wraps only in the mag[0] == 1 case
+    return mp_unary_op(MP_UNARY_OP_NEGATIVE,
+        mp_obj_int_from_bytes_impl(true, 9, mag));
+    #else
+    (void)n;
+    raise_unsupported_msg(MP_ERROR_TEXT("int too large for this build"));
+    #endif
+}
+
+// The content of a bignum tag (2/3): a byte string holding the big-endian
+// magnitude. On mpz builds it becomes an int (leading zero bytes accepted,
+// like cbor2); on longlong builds an out-of-64-bit value is wrapped in
+// Tag(2/3, bytes) (D4): no exception for well-formed CBOR.
+static mp_obj_t up_bignum(unpacker_t *u, size_t n, bool negative) {
+    vstr_t vstr;
+    const byte *b = up_payload(u, n, &vstr);
+    // Trim leading zeros (non-minimal but valid input).
+    while (n > 0 && b[0] == 0) {
+        b++;
+        n--;
+    }
+    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
+    mp_obj_t mag = n == 0 ? MP_OBJ_NEW_SMALL_INT(0) : mp_obj_int_from_bytes_impl(true, n, b);
+    if (u->stream != MP_OBJ_NULL) {
+        vstr_clear(&vstr);
+    }
+    if (negative) {
+        return mp_binary_op(MP_BINARY_OP_SUBTRACT, MP_OBJ_NEW_SMALL_INT(-1), mag);
+    }
+    return mag;
+    #else
+    // longlong builds: a value that fits int64 becomes an int; anything
+    // bigger is wrapped in Tag(2/3, bytes) (D4: no exception for
+    // well-formed CBOR). The magnitude fits 64 bits iff n < 8, or n == 8
+    // with the top bit clear (negative may use the full 64 bits).
+    bool fits;
+    uint64_t mag = 0;
+    for (size_t i = 0; i < n && i < 8; i++) {
+        mag = (mag << 8) | b[i];
+    }
+    if (n < 8) {
+        fits = true;
+    } else if (n == 8) {
+        fits = negative || (b[0] & 0x80) == 0;
+    } else {
+        fits = false;
+    }
+    if (fits) {
+        if (negative) {
+            // -1-mag; mag <= 2**64-1, so -1-mag >= -2**64 fits int64.
+            if (u->stream != MP_OBJ_NULL) {
+                vstr_clear(&vstr);
+            }
+            return mp_obj_new_int_from_ll(-1 - (long long)mag);
+        }
+        if (mag <= 0x7fffffffffffffffULL) {
+            if (u->stream != MP_OBJ_NULL) {
+                vstr_clear(&vstr);
+            }
+            return mp_obj_new_int_from_ll((long long)mag);
+        }
+        // 2**63..2**64-1: no int64 representation; wrap in Tag(2, bytes).
+    }
+    // The Tag content is a copy of the magnitude bytes (b may point into
+    // the input buffer or into vstr; mp_obj_new_bytes copies either way,
+    // and only then may the stream vstr be released).
+    mp_obj_t content = n == 0 ? mp_const_empty_bytes : mp_obj_new_bytes(b, n);
+    if (u->stream != MP_OBJ_NULL) {
+        vstr_clear(&vstr);
+    }
+    mp_obj_tag_t *t = mp_obj_malloc(mp_obj_tag_t, &ccbor_tag_type);
+    t->tag = MP_OBJ_NEW_SMALL_INT(negative ? 3 : 2);
+    t->value = content;
+    return MP_OBJ_FROM_PTR(t);
+    #endif
+}
+
+// Tag content dispatch (D2): registry first (tags 2/3 are intercepted
+// before the registry by the caller), then the Tag wrapper. The 55799
+// self-describe tag is stripped like cbor2 does (also nested: stripping
+// happens here, on the way up).
+static mp_obj_t up_tag_dispatch(unpacker_t *u, mp_obj_t tag_num, mp_obj_t content) {
+    if (mp_obj_equal(tag_num, MP_OBJ_NEW_SMALL_INT(55799))) {
+        return content; // self-describe: strip
+    }
     mp_map_elem_t *e = NULL;
     if (u->tags != NULL) {
-        e = mp_map_lookup(u->tags, MP_OBJ_NEW_SMALL_INT(ext_type), MP_MAP_LOOKUP);
+        e = mp_map_lookup(u->tags, tag_num, MP_MAP_LOOKUP);
     }
-    if (e == NULL) {
-        // Same text as umsgpack's f"ext_type: 0x{ext_type:0X}"
-        if (ext_type < 0) {
-            mp_raise_msg_varg(&mp_type_ccbor_UnsupportedTypeException,
-                MP_ERROR_TEXT("ext_type: 0x-%X"), (unsigned int)-ext_type);
+    if (e != NULL) {
+        mp_obj_t cls = e->value;
+        mp_obj_t dest[4];
+        mp_load_method_maybe(cls, MP_QSTR_unpackb, dest);
+        if (dest[0] == MP_OBJ_NULL) {
+            raise_with_obj(&mp_type_NotImplementedError, "Tag class ", cls, PRINT_REPR, " lacks unpackb()");
         }
-        mp_raise_msg_varg(&mp_type_ccbor_UnsupportedTypeException,
-            MP_ERROR_TEXT("ext_type: 0x%X"), (unsigned int)ext_type);
+        dest[2] = content;
+        dest[3] = options_dict(&u->options, u->kw);
+        mp_obj_t obj = mp_call_method_n_kw(2, 0, dest);
+        up_revalidate(u);
+        return obj;
     }
-    mp_obj_t cls = e->value;
-    mp_obj_t dest[4];
-    mp_load_method_maybe(cls, MP_QSTR_unpackb, dest);
-    if (dest[0] == MP_OBJ_NULL) {
-        raise_with_obj(&mp_type_NotImplementedError, "Ext class ", cls, PRINT_REPR, " lacks unpackb()");
-    }
-    dest[2] = data;
-    dest[3] = options_dict(&u->options, u->kw);
-    mp_obj_t obj = mp_call_method_n_kw(2, 0, dest);
-    up_revalidate(u);
-    return obj;
+    mp_obj_tag_t *t = mp_obj_malloc(mp_obj_tag_t, &ccbor_tag_type);
+    t->tag = tag_num;
+    t->value = content;
+    return MP_OBJ_FROM_PTR(t);
 }
 
 static void up_enter(unpacker_t *u) {
@@ -1321,9 +1465,35 @@ static size_t up_prealloc(unpacker_t *u, size_t n) {
     return n < limit ? n : limit;
 }
 
+// SIZE_MAX as n means an indefinite-length array: items until the BREAK
+// byte (0xff), which up_obj reports as MP_OBJ_SENTINEL.
+#define CCBOR_BREAK_SENTINEL MP_OBJ_FROM_PTR((void *)1)
+
 static mp_obj_t up_array(unpacker_t *u, size_t n) {
+    bool indef = n == SIZE_MAX;
+    if (indef) {
+        n = 0; // grown by append; prealloc makes no sense
+    }
     up_enter(u);
     mp_obj_t res;
+    if (indef) {
+        res = mp_obj_new_list(0, NULL);
+        u->indef++;
+        while (true) {
+            mp_obj_t item = up_obj(u);
+            if (item == CCBOR_BREAK_SENTINEL) {
+                break;
+            }
+            mp_obj_list_append(res, item);
+        }
+        u->indef--;
+        if (u->use_tuple) {
+            mp_obj_list_t *l = MP_OBJ_TO_PTR(res);
+            res = mp_obj_new_tuple(l->len, l->items);
+        }
+        u->depth--;
+        return res;
+    }
     if (up_prealloc(u, n) == n) {
         // The usual case: items go straight into a list or tuple of size n.
         mp_obj_t *items;
@@ -1388,8 +1558,9 @@ static void up_check_hashable(unpacker_t *u, mp_obj_t k) {
 }
 
 static mp_obj_t up_map(unpacker_t *u, size_t n) {
+    bool indef = n == SIZE_MAX;
     up_enter(u);
-    mp_obj_t d = mp_obj_new_dict(up_prealloc(u, n));
+    mp_obj_t d = mp_obj_new_dict(indef ? 0 : up_prealloc(u, n));
     #if MICROPY_PY_COLLECTIONS_ORDEREDDICT
     if (u->use_ordered_dict) {
         mp_obj_dict_t *od = MP_OBJ_TO_PTR(d);
@@ -1402,9 +1573,15 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
     }
     #endif
     mp_map_t *map = mp_obj_dict_get_map(d);
-    for (size_t i = 0; i < n; i++) {
+    if (indef) {
+        u->indef++;
+    }
+    for (size_t i = 0; indef || i < n; i++) {
         u->key = true;
         mp_obj_t k = list_to_tuple(up_obj(u));
+        if (indef && k == CCBOR_BREAK_SENTINEL) {
+            break;
+        }
         up_check_hashable(u, k);
         // A single lookup both detects a duplicate and reserves the slot. The
         // slot stays valid while the value is decoded: nothing else can reach
@@ -1425,7 +1602,16 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
             nlr_raise(mp_obj_new_exception_arg1(&mp_type_ccbor_DuplicateKeyException,
                 mp_obj_new_str_from_vstr(&vstr)));
         }
-        e->value = up_obj(u);
+        mp_obj_t v = up_obj(u);
+        if (indef && v == CCBOR_BREAK_SENTINEL) {
+            // BREAK where the value belongs: the map ended on an odd item
+            // count, which is not well-formed (RFC 8949 2.2.1).
+            raise_invalid_code(0xff);
+        }
+        e->value = v;
+    }
+    if (indef) {
+        u->indef--;
     }
     u->depth--;
     return d;
@@ -1455,91 +1641,250 @@ static mp_obj_t up_float64(unpacker_t *u) {
     #endif
 }
 
+// Indefinite-length text (0x7f..ff) or byte string (0x5f..ff): chunks of
+// the same major type, each definite-length, joined. A chunk of another
+// type or another indefinite item inside is an invalid code (D7).
+static mp_obj_t up_str_indef(unpacker_t *u, bool text, bool key) {
+    up_enter(u);
+    vstr_t vstr;
+    vstr_init(&vstr, 32);
+    while (true) {
+        byte ic = up_read(u, 1)[0];
+        if (ic == 0xff) {
+            break;
+        }
+        byte mt = ic & 0xe0;
+        byte ai = ic & 0x1f;
+        if (mt != (text ? 0x60 : 0x40) || ai == 0x1f) {
+            raise_invalid_code(ic);
+        }
+        size_t n;
+        if (ai < 24) {
+            n = ai;
+        } else if (ai <= 27) {
+            n = (size_t)up_be(u, 1 << (ai - 24));
+        } else {
+            raise_invalid_code(ic);
+        }
+        // Append the chunk.
+        size_t old = vstr.len;
+        vstr_add_len(&vstr, n);
+        if (u->stream == MP_OBJ_NULL) {
+            if ((size_t)(u->end - u->cur) < n) {
+                raise_insufficient();
+            }
+            memcpy(vstr.buf + old, u->cur, n);
+            u->cur += n;
+        } else {
+            up_stream_read(u, (byte *)vstr.buf + old, n);
+        }
+    }
+    u->depth--;
+    if (text) {
+        #if MICROPY_PY_BUILTINS_STR_UNICODE && MICROPY_PY_BUILTINS_STR_UNICODE_CHECK
+        if (!unicode_encoding_check(MP_ENCODING_UTF8, (const byte *)vstr.buf, vstr.len)) {
+            if (u->allow_invalid_utf8) {
+                return mp_obj_new_bytes_from_vstr(&vstr);
+            }
+            mp_raise_msg(&mp_type_ccbor_InvalidStringException, MP_ERROR_TEXT("unpacked string is invalid utf-8"));
+        }
+        #endif
+        #if CCBOR_REUSE_QSTR
+        qstr q = key ? qstr_find_strn(vstr.buf, vstr.len) : MP_QSTRnull;
+        if (q != MP_QSTRnull) {
+            vstr_clear(&vstr);
+            return MP_OBJ_NEW_QSTR(q);
+        }
+        #else
+        (void)key;
+        #endif
+        return mp_obj_new_str_from_vstr(&vstr);
+    }
+    return mp_obj_new_bytes_from_vstr(&vstr);
+}
+
 static mp_obj_t up_obj(unpacker_t *u) {
     bool key = u->key; // only for this object, not for what it contains
     u->key = false;
     byte ic = up_read(u, 1)[0];
-    if (ic <= 0x7f) {
-        return MP_OBJ_NEW_SMALL_INT(ic);
+    byte mt = ic & 0xe0;
+    byte ai = ic & 0x1f;
+    if (ic == 0xff) {
+        // BREAK: valid only as the end of an indefinite container (the
+        // caller checks u->indef; a stray one raises here).
+        if (u->indef == 0) {
+            raise_invalid_code(ic);
+        }
+        return CCBOR_BREAK_SENTINEL;
     }
-    if (ic >= 0xe0) {
-        return MP_OBJ_NEW_SMALL_INT((int8_t)ic);
+    // The argument of a definite-length item: 0..2**64-1.
+    #define UP_ARG() \
+    (ai < 24 ? (uint64_t)ai \
+            : ai == 24 ? (uint64_t)up_be(u, 1) \
+            : ai == 25 ? (uint64_t)up_be(u, 2) \
+            : ai == 26 ? (uint64_t)up_be(u, 4) \
+            : ai == 27 ? up_be64(u) : 0)
+    if (ai >= 28 && ai <= 30) {
+        // Additional information 28-30: not well-formed in any major type.
+        raise_invalid_code(ic);
     }
-    if (ic <= 0x8f) {
-        return up_map(u, ic & 0x0f);
+    if (ai == 31 && mt < 0x40) {
+        // Indefinite length exists only for strings and containers; the
+        // BREAK byte itself is handled above. mt0/mt1 (and tags, which
+        // check ai==31 explicitly) cannot be indefinite.
+        raise_invalid_code(ic);
     }
-    if (ic <= 0x9f) {
-        return up_array(u, ic & 0x0f);
+    switch (mt) {
+        case 0x00: { // unsigned int
+            uint64_t x = UP_ARG();
+            mp_obj_t v = up_uint64_obj(x);
+            if (v != MP_OBJ_NULL) {
+                return v;
+            }
+            // longlong build, x >= 2**63: wrap in Tag(2, magnitude bytes)
+            mp_obj_tag_t *t = mp_obj_malloc(mp_obj_tag_t, &ccbor_tag_type);
+            t->tag = MP_OBJ_NEW_SMALL_INT(2);
+            byte *bs = (byte *)m_new(byte, 9);
+            bs[0] = 0;
+            put_be64(bs + 1, x);
+            // trim to the minimal byte string
+            size_t nb = 9;
+            while (nb > 1 && bs[9 - nb] == 0) {
+                nb--;
+            }
+            t->value = mp_obj_new_bytes(bs + 9 - nb, nb);
+            m_del(byte, bs, 9);
+            return MP_OBJ_FROM_PTR(t);
+        }
+        case 0x20: { // negative int
+            uint64_t n = UP_ARG();
+            mp_obj_t v = up_negint_obj(n);
+            if (v != MP_OBJ_NULL) {
+                return v;
+            }
+            // longlong build, below LONG_LONG_MIN: wrap in Tag(3, bytes of n)
+            mp_obj_tag_t *t = mp_obj_malloc(mp_obj_tag_t, &ccbor_tag_type);
+            t->tag = MP_OBJ_NEW_SMALL_INT(3);
+            byte *bs = (byte *)m_new(byte, 8);
+            put_be64(bs, n);
+            t->value = mp_obj_new_bytes(bs, 8);
+            m_del(byte, bs, 8);
+            return MP_OBJ_FROM_PTR(t);
+        }
+        case 0x40: // byte string
+            if (ai == 31) {
+                return up_str_indef(u, false, false);
+            }
+            return up_bin(u, (size_t)UP_ARG());
+        case 0x60: // text string
+            if (ai == 31) {
+                return up_str_indef(u, true, key);
+            }
+            return up_str(u, (size_t)UP_ARG(), key);
+        case 0x80: // array
+            if (ai == 31) {
+                return up_array(u, SIZE_MAX);
+            }
+            return up_array(u, (size_t)UP_ARG());
+        case 0xa0: // map
+            if (ai == 31) {
+                return up_map(u, SIZE_MAX);
+            }
+            return up_map(u, (size_t)UP_ARG());
+        case 0xc0: { // tag
+            uint64_t n = UP_ARG();
+            if (ai == 31) {
+                raise_invalid_code(ic); // indefinite tag numbers do not exist
+            }
+            mp_obj_t tag_num = up_uint64_obj(n);
+            if (tag_num == MP_OBJ_NULL) {
+                // longlong build, tag number >= 2**63: keep the raw uint64
+                // in the Tag (review point 10). A small-int tag field cannot
+                // hold it; use the 8-byte byte string form? No: the number
+                // is a tag NUMBER; store it as an mpz-free 64-bit value in
+                // the Tag object. MicroPython longlong builds have no int
+                // for it, so the Tag keeps the raw bytes.
+                // A longlong build has no int for n >= 2**63: the tag
+                // number keeps its raw 64-bit value in a small wrapper...
+                // there is none, so this raises (documented limitation).
+                raise_unsupported_msg(MP_ERROR_TEXT("tag number too large for this build"));
+            }
+            // Native bignum tags 2/3: the content must be a byte string.
+            if (n == 2 || n == 3) {
+                byte cic = up_read(u, 1)[0];
+                byte cmt = cic & 0xe0;
+                byte cai = cic & 0x1f;
+                if (cmt != 0x40 || cai == 0x1f || (cai >= 28 && cai <= 30)) {
+                    raise_invalid_code(cic);
+                }
+                size_t cn = cai < 24 ? cai : (size_t)(cai == 24 ? up_be(u, 1) : cai == 25 ? up_be(u, 2) : cai == 26 ? up_be(u, 4) : up_be64(u));
+                return up_bignum(u, cn, n == 3);
+            }
+            up_enter(u); // tags count towards the depth limit (review 8)
+            mp_obj_t content = up_obj(u);
+            u->depth--;
+            return up_tag_dispatch(u, tag_num, content);
+        }
+        default: { // 0xe0: simple values and floats
+            // ai < 24: a simple value encoded in this byte. 20..23 are the
+            // known ones; 0..19 are unassigned and unsupported (D3).
+            if (ai < 24) {
+                switch (ai) {
+                    case 20:
+                        return mp_const_false;
+                    case 21:
+                        return mp_const_true;
+                    case 22:
+                        return mp_const_none;
+                    case 23:
+                        return MP_OBJ_FROM_PTR(&mp_const_ellipsis_obj);
+                    default:
+                        raise_unsupported_simple(ai);
+                }
+            }
+            switch (ai) {
+                case 20:
+                    return mp_const_false;
+                case 21:
+                    return mp_const_true;
+                case 22:
+                    return mp_const_none;
+                case 23:
+                    return MP_OBJ_FROM_PTR(&mp_const_ellipsis_obj);
+                case 24: { // 1-byte simple value
+                    byte sv = up_read(u, 1)[0];
+                    // 0..31 duplicate the 0-byte forms and are reserved
+                    // (not well-formed); 32..255 are unassigned (D3, D7).
+                    if (sv < 32) {
+                        raise_invalid_code(ic);
+                    }
+                    raise_unsupported_simple(sv);
+                }
+                case 25: { // half float
+                    #if MICROPY_PY_BUILTINS_FLOAT
+                    uint32_t h = up_be(u, 2);
+                    return mp_obj_new_float_from_f(f16_bits_to_f32(h));
+                    #else
+                    (void)up_be(u, 2);
+                    raise_unsupported_msg(MP_ERROR_TEXT("float not supported"));
+                    #endif
+                }
+                case 26:
+                    return up_float32(u);
+                case 27:
+                    return up_float64(u);
+                case 28:
+                case 29:
+                case 30:
+                    raise_invalid_code(ic); // (already caught above; kept for clarity)
+                case 31:
+                    raise_invalid_code(ic); // stray BREAK
+                default:
+                    raise_invalid_code(ic);
+            }
+        }
     }
-    if (ic <= 0xbf) {
-        return up_str(u, ic & 0x1f, key);
-    }
-    switch (ic) {
-        case 0xc0:
-            return mp_const_none;
-        case 0xc1:
-            mp_raise_msg(&mp_type_ccbor_ReservedCodeException, MP_ERROR_TEXT("got 0xc1"));
-        case 0xc2:
-            return mp_const_false;
-        case 0xc3:
-            return mp_const_true;
-        case 0xc4:
-            return up_bin(u, up_be(u, 1));
-        case 0xc5:
-            return up_bin(u, up_be(u, 2));
-        case 0xc6:
-            return up_bin(u, up_be(u, 4));
-        case 0xc7:
-            return up_ext(u, up_be(u, 1));
-        case 0xc8:
-            return up_ext(u, up_be(u, 2));
-        case 0xc9:
-            return up_ext(u, up_be(u, 4));
-        case 0xca:
-            return up_float32(u);
-        case 0xcb:
-            return up_float64(u);
-        case 0xcc:
-            return MP_OBJ_NEW_SMALL_INT(up_be(u, 1));
-        case 0xcd:
-            return MP_OBJ_NEW_SMALL_INT(up_be(u, 2));
-        case 0xce:
-            return mp_obj_new_int_from_uint(up_be(u, 4));
-        case 0xcf:
-            return mp_obj_new_int_from_ull(up_be64(u));
-        case 0xd0:
-            return MP_OBJ_NEW_SMALL_INT((int8_t)up_be(u, 1));
-        case 0xd1:
-            return MP_OBJ_NEW_SMALL_INT((int16_t)up_be(u, 2));
-        case 0xd2:
-            return mp_obj_new_int((int32_t)up_be(u, 4));
-        case 0xd3:
-            return mp_obj_new_int_from_ll((int64_t)up_be64(u));
-        case 0xd4:
-            return up_ext(u, 1);
-        case 0xd5:
-            return up_ext(u, 2);
-        case 0xd6:
-            return up_ext(u, 4);
-        case 0xd7:
-            return up_ext(u, 8);
-        case 0xd8:
-            return up_ext(u, 16);
-        case 0xd9:
-            return up_str(u, up_be(u, 1), key);
-        case 0xda:
-            return up_str(u, up_be(u, 2), key);
-        case 0xdb:
-            return up_str(u, up_be(u, 4), key);
-        case 0xdc:
-            return up_array(u, up_be(u, 2));
-        case 0xdd:
-            return up_array(u, up_be(u, 4));
-        case 0xde:
-            return up_map(u, up_be(u, 2));
-        default: // 0xdf
-            return up_map(u, up_be(u, 4));
-    }
+    raise_invalid_code(ic); // unreachable
 }
 
 static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
@@ -1549,6 +1894,7 @@ static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
     u->kw = kw;
     u->options = MP_OBJ_NULL;
     u->depth = 0;
+    u->indef = 0;
     u->key = false;
     u->use_tuple = kw_flag(kw, MP_QSTR_use_tuple);
     u->use_ordered_dict = kw_flag(kw, MP_QSTR_use_ordered_dict);
@@ -1592,122 +1938,166 @@ static mp_obj_t ccbor_load(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
     return up_obj(&u);
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(ccbor_load_obj, 1, ccbor_load);
-
 /******************************************************************************/
-// Unpacker: incremental decoding of a byte stream fed in arbitrary chunks.
-
 // Size of the first complete object in buf, or 0 if more data is needed.
 // Iterative and allocation free: it only walks the headers, counting the
-// items still expected, so deep nesting costs no stack. Returns SIZE_MAX for
-// the reserved code 0xc1.
+// items still expected, so deep nesting costs no C stack (except for the
+// small fixed stack of open INDEFINITE containers, review point 9).
+// Returns SIZE_MAX for a not-well-formed code (the caller skips a byte
+// and raises InvalidCodeException, so the stream can resynchronise).
+//
+// Accounting: pending counts the items the innermost DEFINITE context still
+// owes (starting at 1 for the top-level object); opening an indefinite
+// container (5f/7f/9f/bf) pushes the parent's pending and resets it to 0;
+// BREAK (ff) requires pending == 0 and an open frame, restores the parent's
+// pending, and the container counts as the one item its opening byte
+// consumed. Definite containers add their item count to pending.
+
+typedef struct _measure_frame_t {
+    uint64_t pending; // the parent context's outstanding item count
+} measure_frame_t;
+
 static size_t ccbor_measure(const byte *buf, size_t len) {
     const byte *p = buf;
     const byte *end = buf + len;
     uint64_t pending = 1;
-    while (pending > 0) {
+    measure_frame_t stack[CCBOR_MAX_DEPTH];
+    size_t sp = 0;
+    while (pending > 0 || sp > 0) {
         if (p == end) {
             return 0;
         }
         byte ic = *p++;
-        pending--;
-        size_t hdr = 0;           // bytes of the length field
-        uint64_t payload = 0;     // bytes after it
-        uint64_t items = 0;       // children still to read
-        size_t fixed = 0;         // fixed-size payload
-        if (ic <= 0x7f || ic >= 0xe0) {
-            continue;
-        } else if (ic <= 0x8f) {
-            items = 2 * (ic & 0x0f);
-        } else if (ic <= 0x9f) {
-            items = ic & 0x0f;
-        } else if (ic <= 0xbf) {
-            fixed = ic & 0x1f;
-        } else {
-            switch (ic) {
-                case 0xc1:
-                    return SIZE_MAX;
-                case 0xc4:
-                case 0xd9:
-                    hdr = 1;
-                    break;
-                case 0xc5:
-                case 0xda:
-                    hdr = 2;
-                    break;
-                case 0xc6:
-                case 0xdb:
-                    hdr = 4;
-                    break;
-                case 0xc7:
-                    hdr = 1;
-                    fixed = 1;
-                    break;
-                case 0xc8:
-                    hdr = 2;
-                    fixed = 1;
-                    break;
-                case 0xc9:
-                    hdr = 4;
-                    fixed = 1;
-                    break;
-                case 0xca:
-                case 0xce:
-                case 0xd2:
-                    fixed = 4;
-                    break;
-                case 0xcb:
-                case 0xcf:
-                case 0xd3:
-                    fixed = 8;
-                    break;
-                case 0xcc:
-                case 0xd0:
-                    fixed = 1;
-                    break;
-                case 0xcd:
-                case 0xd1:
-                    fixed = 2;
-                    break;
-                case 0xd4:
-                case 0xd5:
-                case 0xd6:
-                case 0xd7:
-                case 0xd8:
-                    fixed = 1 + ((size_t)1 << (ic - 0xd4));
-                    break;
-                case 0xdc:
-                case 0xde:
-                    hdr = 2;
-                    break;
-                case 0xdd:
-                case 0xdf:
-                    hdr = 4;
-                    break;
-                default: // 0xc0, 0xc2, 0xc3
-                    break;
-            }
+        if (pending > 0) {
+            pending--; // this byte starts one expected item
         }
-        if (hdr > 0) {
+        if (ic == 0xff) {
+            // BREAK: closes the innermost indefinite container. Valid only
+            // with an open frame and no items still owed inside it.
+            if (sp == 0 || pending != 0) {
+                return SIZE_MAX;
+            }
+            sp--;
+            pending = stack[sp].pending;
+            continue;
+        }
+        byte mt = ic & 0xe0;
+        byte ai = ic & 0x1f;
+        uint64_t payload = 0; // bytes after the header
+        uint64_t items = 0;   // children still to read
+        if (ai >= 28 && ai <= 30) {
+            return SIZE_MAX; // additional info 28-30: invalid everywhere
+        }
+        if (ai == 31) {
+            // Indefinite length: only strings and containers.
+            if (mt < 0x40 || mt == 0xc0) {
+                return SIZE_MAX;
+            }
+            if (mt == 0x40 || mt == 0x60) {
+                // Indefinite string: scan the chunks (definite-length
+                // strings of the same major type) until BREAK. No frame
+                // is needed: chunks cannot nest.
+                while (true) {
+                    if (p == end) {
+                        return 0;
+                    }
+                    byte cic = *p++;
+                    if (cic == 0xff) {
+                        break;
+                    }
+                    byte cmt = cic & 0xe0;
+                    byte cai = cic & 0x1f;
+                    if (cmt != mt || cai >= 28) {
+                        return SIZE_MAX; // wrong chunk type or bad code
+                    }
+                    uint64_t cn = cai < 24 ? cai : 0; // the chunk length
+                    size_t chdr = cai < 24 ? 0 : (size_t)1 << (cai - 24);
+                    if (cai == 31 || (size_t)(end - p) < chdr) {
+                        return cai == 31 ? SIZE_MAX : 0;
+                    }
+                    for (size_t i = 0; i < chdr; i++) {
+                        cn = (cn << 8) | *p++;
+                    }
+                    if (cn > (uint64_t)(end - p)) {
+                        return 0; // chunk longer than the data
+                    }
+                    p += cn;
+                }
+                continue; // the string was one item of this context
+            }
+            // Indefinite array or map: push the parent context.
+            if (sp >= CCBOR_MAX_DEPTH) {
+                return SIZE_MAX; // deeper than the limit
+            }
+            stack[sp].pending = pending;
+            sp++;
+            pending = 0; // items until BREAK
+            continue;
+        }
+        // mt7 floats have no argument: the bytes after the head are the
+        // payload (f9: 2, fa: 4, fb: 8).
+        if (mt == 0xe0 && ai >= 25) {
+            size_t flen = ai == 25 ? 2 : ai == 26 ? 4 : 8;
+            if ((size_t)(end - p) < flen) {
+                return 0;
+            }
+            p += flen;
+            continue;
+        }
+        // Definite length: ai < 24 encodes the argument in this byte;
+        // 24/25/26/27 add 1/2/4/8 bytes of it.
+        uint64_t n = ai;
+        if (ai >= 24) {
+            size_t hdr = (size_t)1 << (ai - 24);
             if ((size_t)(end - p) < hdr) {
                 return 0;
             }
-            uint32_t n = 0;
+            n = 0;
             for (size_t i = 0; i < hdr; i++) {
                 n = (n << 8) | *p++;
             }
-            if (ic == 0xdc || ic == 0xdd) {
-                items = n;
-            } else if (ic == 0xde || ic == 0xdf) {
-                items = 2 * (uint64_t)n;
-            } else {
+        }
+        switch (mt) {
+            case 0x00:
+            case 0x20:
+                continue; // int: no payload
+            case 0x40:
+            case 0x60:
                 payload = n;
+                break;
+            case 0x80:
+                items = n;
+                break;
+            case 0xa0:
+                items = 2 * n; // n <= 2**63: no overflow
+                break;
+            case 0xc0:
+                items = 1; // the tag's content
+                break;
+            default: { // 0xe0: simple values and floats
+                if (ai < 24) {
+                    // Simple values 0..23 in one byte. 20..23 are the
+                    // known ones; 0..19 are unassigned (the decoder raises
+                    // UnsupportedTypeException): either way, one byte.
+                    continue;
+                }
+                if (ai == 24) {
+                    if (n < 32) {
+                        return SIZE_MAX; // reserved 1-byte simple value
+                    }
+                    continue; // the decoder raises for the unassigned ones
+                }
+                // 25/26/27: half/single/double float
+                payload = ai == 25 ? 2 : ai == 26 ? 4 : 8;
+                break;
             }
         }
-        payload += fixed;
-        if ((uint64_t)(end - p) < payload) {
-            return 0;
+        if (payload > 0) {
+            if ((uint64_t)(end - p) < payload) {
+                return 0;
+            }
+            p += payload;
         }
-        p += payload;
         pending += items;
     }
     return p - buf;
@@ -1782,7 +2172,7 @@ static size_t unpacker_next_size(mp_obj_unpacker_t *self) {
         // Skip the bad byte so the stream can resynchronise.
         self->pos += 1;
         self->checked_len = SIZE_MAX;
-        mp_raise_msg(&mp_type_ccbor_ReservedCodeException, MP_ERROR_TEXT("got 0xc1"));
+        mp_raise_msg(&mp_type_ccbor_InvalidCodeException, MP_ERROR_TEXT("invalid code"));
     }
     self->checked_len = n == 0 ? pending : SIZE_MAX;
     return n;
@@ -1988,7 +2378,7 @@ static const mp_rom_map_elem_t ccbor_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_UnsupportedTypeException), MP_ROM_PTR(&mp_type_ccbor_UnsupportedTypeException) },
     { MP_ROM_QSTR(MP_QSTR_InsufficientDataException), MP_ROM_PTR(&mp_type_ccbor_InsufficientDataException) },
     { MP_ROM_QSTR(MP_QSTR_InvalidStringException), MP_ROM_PTR(&mp_type_ccbor_InvalidStringException) },
-    { MP_ROM_QSTR(MP_QSTR_ReservedCodeException), MP_ROM_PTR(&mp_type_ccbor_ReservedCodeException) },
+    { MP_ROM_QSTR(MP_QSTR_InvalidCodeException), MP_ROM_PTR(&mp_type_ccbor_InvalidCodeException) },
     { MP_ROM_QSTR(MP_QSTR_UnhashableKeyException), MP_ROM_PTR(&mp_type_ccbor_UnhashableKeyException) },
     { MP_ROM_QSTR(MP_QSTR_DuplicateKeyException), MP_ROM_PTR(&mp_type_ccbor_DuplicateKeyException) },
 };

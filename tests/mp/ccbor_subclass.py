@@ -1,7 +1,3 @@
-# SKIP: the decoder is still MessagePack; phase 3 (CBOR unpacker) rewrites this test
-print("SKIP")
-raise SystemExit
-
 # Subclasses of the native types and native subtypes pack like their base.
 try:
     import ccbor
@@ -55,8 +51,8 @@ try:
     NT = namedtuple("NT", ("x", "y"))
     print(m.dumps(NT(1, "y")), m.dumps([NT(1, 2), NT(3, (4,))]))
 except ImportError:
-    print(b"\x82\xa1z\x01\xa1a\x02")
-    print(b"\x92\x01\xa1y", b"\x92\x92\x01\x02\x92\x03\x91\x04")
+    print(b"\xa2\x61z\x01\x61a\x02")
+    print(b"\x82\x01\x61y", b"\x82\x82\x01\x02\x82\x03\x81\x04")
 
 # bool is not an int here: True packs as true
 print(m.dumps([True, False, 1, 0]))

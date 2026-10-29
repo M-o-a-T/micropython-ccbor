@@ -1,7 +1,3 @@
-# SKIP: the decoder is still MessagePack; phase 3 (CBOR unpacker) rewrites this test
-print("SKIP")
-raise SystemExit
-
 # dump/load on streams: native streams (BytesIO), Python file-like objects,
 # short reads, several objects in a row, end of data.
 try:
@@ -82,7 +78,7 @@ except m.UnsupportedTypeException:
     print("written:", w.calls)
 
 # load options apply to streams too
-print(m.load(io.BytesIO(b"\x92\x01\x02"), use_tuple=True))
+print(m.load(io.BytesIO(b"\x82\x01\x02"), use_tuple=True))
 
 # objects without read()/write()
 for f, args in ((m.load, (1,)), (m.dump, (1, 1))):

@@ -1,7 +1,3 @@
-# SKIP: the decoder is still MessagePack; phase 3 (CBOR unpacker) rewrites this test
-print("SKIP")
-raise SystemExit
-
 # ALoader: asynchronous decoding from an asyncio StreamReader-like object.
 try:
     import ccbor

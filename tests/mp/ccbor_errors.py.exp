@@ -1,1 +1,50 @@
-SKIP
+True
+InsufficientDataException True True
+InvalidStringException True True
+InvalidCodeException True True
+UnhashableKeyException True True
+DuplicateKeyException True True
+UnsupportedTypeException <class 'set'>
+UnsupportedTypeException <class 'object'>
+UnsupportedTypeException <class 'complex'>
+returned b'\xf9>\x00'
+returned b'\x01'
+ValueError invalid float precision
+returned b'\x01'
+TypeError function missing 1 required positional arguments
+TypeError function takes 1 positional arguments but 2 were given
+UnsupportedTypeException huge unsigned int
+InsufficientDataException 
+InsufficientDataException 
+InsufficientDataException 
+InsufficientDataException 
+InvalidCodeException invalid code 0x1c
+InvalidCodeException invalid code 0x1c
+DuplicateKeyException "a" (<class 'str'>)
+DuplicateKeyException "1" (<class 'int'>)
+returned {(): 1}
+returned {((),): 1}
+UnsupportedTypeException unsupported simple value 16
+UnsupportedTypeException unsupported simple value 32
+InvalidCodeException invalid code 0xf8
+InvalidCodeException invalid code 0xff
+InvalidCodeException invalid code 0x1f
+InvalidCodeException invalid code 0x3f
+InvalidCodeException invalid code 0x1f
+InvalidCodeException invalid code 0x01
+InvalidCodeException invalid code 0x7f
+InsufficientDataException 
+InvalidCodeException invalid code 0xff
+InvalidCodeException invalid code 0xff
+InvalidCodeException invalid code 0xff
+TypeError Need 'bytes' or 'bytearray'
+TypeError Need 'bytes' or 'bytearray'
+TypeError Need 'bytes' or 'bytearray'
+InsufficientDataException 
+InsufficientDataException 
+InsufficientDataException 
+InsufficientDataException 
+ValueError Tag number 1180591620717411303424 is out of range of 0 to 2**64-1
+ValueError tag 2 and 3 are the native bignum tags
+caught as UnpackException
+caught as PackException

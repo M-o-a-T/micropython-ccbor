@@ -1,7 +1,3 @@
-# SKIP: the decoder is still MessagePack; phase 3 (CBOR unpacker) rewrites this test
-print("SKIP")
-raise SystemExit
-
 # Robustness: hostile input, deep nesting, cycles, and Python callbacks that
 # modify the data being packed or unpacked. Nothing here may crash.
 try:
@@ -28,8 +24,10 @@ for _ in range(200):
     cur.append([])
     cur = cur[0]
 show(m.dumps, deep)
-show(m.loads, b"\x91" * 200 + b"\xc0")
-show(m.loads, b"\x81\x01" * 200 + b"\xc0")
+show(m.loads, b"\x81" * 200 + b"\xf6")
+show(m.loads, b"\xa1\x01" * 200 + b"\xf6")
+show(m.loads, b"\x9f" * 200 + b"\xf6" * 201)  # indefinite nesting
+show(m.loads, b"\xc1" * 200 + b"\xf6")  # tag chain
 
 # the limit itself is fine
 ok = []
@@ -40,8 +38,8 @@ for _ in range(31):
 print(m.loads(m.dumps(ok)) == ok)
 cur.append([])
 show(m.dumps, ok)
-show(m.loads, b"\x91" * 32 + b"\xc0")
-print(m.loads(b"\x91" * 31 + b"\xc0") is not None)
+show(m.loads, b"\x81" * 33 + b"\xf6")
+print(m.loads(b"\x81" * 32 + b"\xf6") is not None)
 
 # a list that contains itself
 cyc = [1]
@@ -50,12 +48,12 @@ show(m.dumps, cyc)
 
 # huge declared sizes with little data: an error, no huge allocation
 for data in (
-    b"\xdd\x7f\xff\xff\xff",
-    b"\xdf\x7f\xff\xff\xff",
-    b"\xdb\x7f\xff\xff\xff",
-    b"\xc6\x7f\xff\xff\xff",
-    b"\xc9\x7f\xff\xff\xff\x01",
-    b"\xdd\x7f\xff\xff\xff" + b"\x90" * 10,
+    b"\x9b\x7f\xff\xff\xff\xff\xff\xff\xff",  # array(2**63-1) items
+    b"\xbb\x7f\xff\xff\xff\xff\xff\xff\xff",  # map(2**63-1) pairs
+    b"\x7b\x7f\xff\xff\xff\xff\xff\xff\xff",  # text(2**63-1) bytes
+    b"\x5b\x7f\xff\xff\xff\xff\xff\xff\xff",  # bytes(2**63-1)
+    b"\xdb\x7f\xff\xff\xff\xff\xff\xff\xff\xf6",  # tag(2**63-1) of null
+    b"\x9b\x7f\xff\xff\xff\xff\xff\xff\xff" + b"\x80" * 10,
 ):
     show(m.loads, data)
     show(m.loads, data, use_tuple=True)
@@ -69,6 +67,8 @@ for n in range(len(msg)):
         errs.add("decoded")
     except m.InsufficientDataException:
         errs.add("InsufficientDataException")
+    except m.InvalidCodeException:
+        errs.add("InvalidCodeException")  # truncation inside a header
 print(sorted(errs))
 
 # every single-byte value as a whole message
@@ -82,15 +82,15 @@ for b in range(256):
 print(sorted(kinds.items()))
 
 
-# an ext packb that grows the list being packed
-@m.ext_serializable(0x40)
+# a tag packb that grows the list being packed
+@m.tag_serializable(0x40)
 class Grow:
     def __init__(self, target):
         self.target = target
 
     def packb(self):
         self.target.append(0)
-        return b""
+        return 0
 
 
 lst = [0]
@@ -98,8 +98,8 @@ lst.append(Grow(lst))
 show(m.dumps, lst)
 
 
-# an ext packb that adds keys to the dict being packed
-@m.ext_serializable(0x41)
+# a tag packb that adds keys to the dict being packed
+@m.tag_serializable(0x41)
 class GrowDict:
     def __init__(self, target):
         self.target = target
@@ -107,21 +107,21 @@ class GrowDict:
     def packb(self):
         for i in range(20):
             self.target[i] = i
-        return b""
+        return 0
 
 
 d = {"a": 0}
 d["b"] = GrowDict(d)
 show(m.dumps, d)
 
-# an ext unpackb that resizes the bytearray being unpacked
+# a tag unpackb that resizes the bytearray being unpacked
 buf = bytearray()
 
 
-@m.ext_serializable(0x42)
+@m.tag_serializable(0x42)
 class Shrink:
     def packb(self):
-        return b""
+        return 0
 
     @staticmethod
     def unpackb(data, options):
@@ -129,10 +129,10 @@ class Shrink:
         return "shrunk"
 
 
-@m.ext_serializable(0x43)
+@m.tag_serializable(0x43)
 class Enlarge:
     def packb(self):
-        return b""
+        return 0
 
     @staticmethod
     def unpackb(data, options):
@@ -146,5 +146,5 @@ buf[:] = m.dumps([Enlarge(), "after", [1, 2, 3]])
 show(m.loads, buf)
 
 # keys whose hash raises are unhashable keys, not crashes
-show(m.loads, b"\x81\x81\x01\x02\x03")
-show(m.loads, b"\x81\x92\x01\x80\x02")
+show(m.loads, b"\xa1\xa1\x01\x02\x03")
+show(m.loads, b"\xa1\x82\x01\x80\x02")

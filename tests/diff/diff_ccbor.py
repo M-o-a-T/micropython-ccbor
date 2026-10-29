@@ -56,7 +56,7 @@ AVOIDED = ("MemoryError", "OverflowError")
 UNPACK_ERRORS = (
     "InsufficientDataException",
     "InvalidStringException",
-    "ReservedCodeException",
+    "InvalidCodeException",
     "UnhashableKeyException",
     "DuplicateKeyException",
     "UnsupportedTypeException",

@@ -147,7 +147,7 @@ Exception
  └── UnpackException
       ├── InsufficientDataException  the data ends before the object does
       ├── InvalidStringException     a str that is not valid UTF-8
-      ├── ReservedCodeException      the reserved byte 0xc1
+      ├── InvalidCodeException      the reserved byte 0xc1
       ├── UnhashableKeyException     a map key that cannot be a dict key
       └── DuplicateKeyException      the same key twice in a map
 ```
@@ -262,7 +262,7 @@ while True:
   limit. The default, 0, means no limit.
 - An object that fails to decode (for example an invalid string) raises its
   exception and is skipped; the reserved byte 0xc1 raises
-  `ReservedCodeException` and is skipped. Decoding goes on with the next
+  `InvalidCodeException` and is skipped. Decoding goes on with the next
   object, so a stream can recover from noise.
 - Completeness is checked without decoding and without allocating, so
   feeding byte by byte costs little.

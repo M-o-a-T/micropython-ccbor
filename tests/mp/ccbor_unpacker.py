@@ -1,7 +1,3 @@
-# SKIP: the decoder is still MessagePack; phase 3 (CBOR unpacker) rewrites this test
-print("SKIP")
-raise SystemExit
-
 # Unpacker: incremental decoding of data that arrives in arbitrary chunks.
 try:
     import ccbor
@@ -10,7 +6,16 @@ except ImportError:
     raise SystemExit
 
 m = ccbor
-objs = [{"a": [1, 2, 3]}, "hello", 42, [None, True, b"\x00" * 40], -1.5, {"n": {"m": {}}}]
+objs = [
+    {"a": [1, 2, 3]},
+    "hello",
+    42,
+    [None, True, b"\x00" * 40],
+    -1.5,
+    {"n": {"m": {}}},
+    ccbor.Tag(1, 2),
+    ...,  # Ellipsis
+]
 stream = b"".join(m.dumps(o) for o in objs)
 
 # every chunk size from 1 byte to the whole stream gives the same objects
@@ -22,6 +27,23 @@ for size in (1, 2, 3, 5, 7, 16, 64, len(stream)):
         out.extend(u)
     print(size if size < 64 else "64+", out == objs, len(u))
 
+# indefinite containers, fed in single bytes
+indef = b"\x9f\x01\x82\x02\x03\x9f\x04\x05\xff\xff"
+u = m.Unpacker()
+got = []
+for i in range(len(indef)):
+    u.feed(indef[i : i + 1])
+    got.extend(u)
+print(got == [[1, [2, 3], [4, 5]]])
+
+# indefinite strings, chunk by chunk
+indef_s = b"\x7f\x65strea\x64ming\xff"
+u = m.Unpacker()
+u.feed(indef_s[:4])
+print(list(u), len(u))
+u.feed(indef_s[4:])
+print(list(u) == ["streaming"], len(u))
+
 # nothing complete yet: iteration stops at once and the data is kept
 u = m.Unpacker()
 u.feed(stream[:3])
@@ -29,7 +51,7 @@ print(list(u), len(u), bool(u))
 u.feed(stream[3:])
 print(len(list(u)), len(u), bool(u))
 
-# next_raw returns the bytes of each complete object, without decoding
+# next_raw returns the bytes of each complete object, without decoding it
 u = m.Unpacker()
 u.feed(stream)
 raws = []
@@ -42,7 +64,7 @@ print([m.loads(r) for r in raws] == objs)
 
 # load options
 u = m.Unpacker(use_tuple=True)
-u.feed(b"\x92\x01\x92\x02\x03")
+u.feed(b"\x82\x01\x82\x02\x03")
 print(next(u))
 
 # reset discards buffered data
@@ -52,22 +74,22 @@ u.reset()
 u.feed(b"\x05")
 print(list(u))
 
-# a bad byte (0xc1) is skipped, so the stream resynchronises
+# a bad code (1c) is skipped, so the stream resynchronises
 u = m.Unpacker()
-u.feed(b"\x01\xc1\x02")
+u.feed(b"\x01\x1c\x02")
 out = []
 while True:
     try:
         for o in u:
             out.append(o)
         break
-    except m.ReservedCodeException:
+    except m.InvalidCodeException:
         out.append("bad")
 print(out)
 
 # an object that fails to decode is consumed; decoding goes on after it
 u = m.Unpacker()
-u.feed(b"\xa2\xff\xfe\x07")
+u.feed(b"\x62\xff\xfe\x07")
 try:
     next(u)
 except m.InvalidStringException:
@@ -76,18 +98,18 @@ print(next(u))
 
 # max_buffer_size bounds the memory used by incomplete data
 u = m.Unpacker(max_buffer_size=8)
-u.feed(b"\xdb\x00\x01\x00\x00abc")
+u.feed(b"\x7a\x00\x01\x00\x00abc")
 try:
     u.feed(b"defgh")
 except ValueError as e:
     print("ValueError", e)
 print(len(u))
 
-# an ext unpackb may not feed the Unpacker that is decoding it
+# a tag unpackb may not feed the Unpacker that is decoding it
 u = m.Unpacker()
 
 
-@m.ext_serializable(0x30)
+@m.tag_serializable(0x30)
 class Reentrant:
     def packb(self):
         return b"x"
