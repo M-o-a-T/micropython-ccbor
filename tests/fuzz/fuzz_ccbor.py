@@ -8,7 +8,8 @@
 #    RuntimeError for nesting) may come out, never a crash, and the three
 #    entry points must agree.
 # 2. Random objects round-trip: loads(dumps(o)) equals o, up to the types
-#    MessagePack cannot distinguish (tuple/list, bytearray/bytes, subclasses).
+#    CBOR cannot distinguish (tuple/list, bytearray/bytes, subclasses) and
+#    the smallest-exact float width (compared re-packed).
 #
 # Last line: "RESULT: OK ..." or "RESULT: FAIL ...".
 
@@ -29,10 +30,11 @@ for a in sys.argv:
 random.seed(SEED)
 
 ALLOWED = (
-    m.UnpackException,
-    m.UnsupportedTypeException,  # unknown ext type, as in umsgpack
+    m.UnpackException,  # includes InsufficientData/InvalidCode/...
+    m.UnsupportedTypeException,  # unassigned simple values, tags without
+    # unpackb (as with the ext types before)
     RuntimeError,  # nesting deeper than the limit
-    NotImplementedError,  # ext type registered without unpackb
+    NotImplementedError,  # tag registered without unpackb
 )
 fails = 0
 counts = {}
@@ -45,7 +47,7 @@ def fail(*args):
         print("FAIL", *args)
 
 
-@m.ext_serializable(0x01)
+@m.tag_serializable(0x01)
 class E1:
     def __init__(self, data=b""):
         self.data = data
@@ -61,7 +63,7 @@ class E1:
         return isinstance(other, E1) and self.data == other.data
 
 
-@m.ext_serializable(0x02)
+@m.tag_serializable(0x12)
 class NoUnpack:
     def packb(self):
         return b"\x00"
@@ -87,7 +89,9 @@ def robj(depth=0):
     if r == 0:
         return (random.getrandbits(32) << random.getrandbits(5)) - (1 << 35)
     if r == 1:
-        return random.choice([None, True, False, 0, -1, 2**63, -(2**63), 2**64 - 1])
+        return random.choice(
+            [None, True, False, ..., 0, -1, 2**63, -(2**63), 2**64 - 1, 2**64, -(2**64) - 1]
+        )
     if r == 2:
         return struct.unpack(">d", rbytes(8))[0]
     if r == 3:
@@ -100,6 +104,11 @@ def robj(depth=0):
         return E1(rbytes(random.choice((0, 1, 2, 3, 4, 8, 16, 17, 300))))
     if r == 6:
         return random.getrandbits(7)
+    if r == 7:
+        # not tag 1 (registered to E1 below: decode dispatches it to the
+        # class, so a generic Tag(1, x) cannot round-trip), and not 55799
+        # (the self-describe tag: stripped on decode, like cbor2)
+        return m.Tag(random.choice((4, 32, 100)), robj(depth + 1))
     if r < 10:
         return [robj(depth + 1) for _ in range(random.getrandbits(3))]
     if r < 12:
@@ -108,8 +117,8 @@ def robj(depth=0):
         d = {}
         for _ in range(random.getrandbits(3)):
             k = robj(6)  # a scalar
-            if isinstance(k, (list, E1)) or k != k:
-                k = str(k)
+            if isinstance(k, (list, tuple, E1, m.Tag)) or k != k:
+                k = "K"  # stable replacement: str() embeds addresses
             d[k] = robj(depth + 1)
         return d
     return bytearray(rbytes(random.getrandbits(4)))
@@ -124,7 +133,10 @@ def norm(o):
     if isinstance(o, bytearray):
         return bytes(o)
     if isinstance(o, float):
-        return struct.pack(">d", o) if m.float_precision == "double" else struct.pack(">f", o)
+        # floats compare by what dumps() re-emits (smallest exact width)
+        return m.dumps(o)
+    if isinstance(o, m.Tag):
+        return ("Tag", norm(o.tag), norm(o.value))
     return o
 
 
@@ -138,7 +150,10 @@ def norm_loaded(o):
     if isinstance(o, dict):
         return {norm_key_loaded(k): norm_loaded(v) for k, v in o.items()}
     if isinstance(o, float):
-        return struct.pack(">d", o) if m.float_precision == "double" else struct.pack(">f", o)
+        # like norm(): the value as dumps() re-emits it (smallest exact width)
+        return m.dumps(o)
+    if isinstance(o, m.Tag):
+        return ("Tag", norm_loaded(o.tag), norm_loaded(o.value))
     return o
 
 
@@ -162,7 +177,36 @@ def mutate(d):
         elif r == 1:
             d = d[:i]
         elif r == 2:
-            d[i:i] = bytes([random.choice((0xC1, 0xDC, 0xDD, 0xDE, 0xDF, 0xDB, 0xC6, 0xC9, 0xD8))])
+            # CBOR-relevant bytes: bad additional info, indefinite
+            # lengths, BREAK, bignum tags, 1-byte simples
+            d[i:i] = bytes(
+                [
+                    random.choice(
+                        (
+                            0x1C,
+                            0x1D,
+                            0x1E,
+                            0x1F,
+                            0x3F,
+                            0x5F,
+                            0x7F,
+                            0x9F,
+                            0xBF,
+                            0xC2,
+                            0xC3,
+                            0xD9,
+                            0xDA,
+                            0xDB,
+                            0xF8,
+                            0xFF,
+                            0x18,
+                            0x19,
+                            0x1A,
+                            0x1B,
+                        )
+                    )
+                ]
+            )
         else:
             d[i:i] = random.choice(corpus)
     return bytes(d)
@@ -219,6 +263,8 @@ for it in range(ITER):
         back = m.loads(p)
         if norm_loaded(back) != norm(o):
             fail("round trip", repr(o)[:80], repr(back)[:80])
+            print("HEX", p.hex()[:400])
+
 
 print("outcomes:", sorted(counts.items()))
 if fails:

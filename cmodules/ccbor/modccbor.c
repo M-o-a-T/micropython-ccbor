@@ -1508,12 +1508,20 @@ static mp_obj_t up_array(unpacker_t *u, size_t n) {
             items = ((mp_obj_list_t *)MP_OBJ_TO_PTR(res))->items;
         }
         for (size_t i = 0; i < n; i++) {
-            items[i] = up_obj(u);
+            mp_obj_t item = up_obj(u);
+            if (item == CCBOR_BREAK_SENTINEL) {
+                raise_invalid_code(0xff); // BREAK inside a definite container
+            }
+            items[i] = item;
         }
     } else {
         res = mp_obj_new_list(0, NULL);
         for (size_t i = 0; i < n; i++) {
-            mp_obj_list_append(res, up_obj(u));
+            mp_obj_t item = up_obj(u);
+            if (item == CCBOR_BREAK_SENTINEL) {
+                raise_invalid_code(0xff);
+            }
+            mp_obj_list_append(res, item);
         }
         if (u->use_tuple) {
             mp_obj_list_t *l = MP_OBJ_TO_PTR(res);
@@ -1582,8 +1590,11 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
     for (size_t i = 0; indef || i < n; i++) {
         u->key = true;
         mp_obj_t k = up_obj(u);
-        if (indef && k == CCBOR_BREAK_SENTINEL) {
-            break; // the BREAK byte, not an object: check BEFORE inspecting it
+        if (k == CCBOR_BREAK_SENTINEL) {
+            if (indef) {
+                break; // the BREAK byte, not an object
+            }
+            raise_invalid_code(0xff); // BREAK inside a definite container
         }
         k = list_to_tuple(k);
         up_check_hashable(u, k);
@@ -1607,7 +1618,7 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
                 mp_obj_new_str_from_vstr(&vstr)));
         }
         mp_obj_t v = up_obj(u);
-        if (indef && v == CCBOR_BREAK_SENTINEL) {
+        if (v == CCBOR_BREAK_SENTINEL) {
             // BREAK where the value belongs: the map ended on an odd item
             // count, which is not well-formed (RFC 8949 2.2.1).
             raise_invalid_code(0xff);

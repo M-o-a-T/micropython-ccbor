@@ -7,7 +7,9 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-    "msgpack>=1.1",          # reference implementation for interoperability tests (CBOR: cbor2, phase 5)
+    "cbor2>=6.1.2",          # the reference implementation for the interop tests
+                             # (6.1.2 = the Rust implementation; do not depend on
+                             #  cbor2.__version__: a stale dist-info may report 5.9.0)
     "pytest>=8",
     "mpremote>=1.26",        # run code on the boards
     "pyserial>=3.5",
