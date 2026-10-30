@@ -46,7 +46,7 @@ help:
 	@echo "  make format / make lint    MicroPython code style (uncrustify, ruff)"
 
 setup:
-	git submodule update --init micropython third_party/micropython-msgpack third_party/cbor-test-vectors
+	git submodule update --init micropython third_party/cbor-test-vectors
 	$(MAKE) -C micropython/ports/unix submodules
 	$(MAKE) -C micropython/mpy-cross -j8
 ifdef UV

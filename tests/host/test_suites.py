@@ -1,7 +1,7 @@
 """The MicroPython-side test programs, run on each unix build:
 the run-tests.py suite, the differential test, the fuzzer and the
-conformance check. (Differential/conformance move from umsgpack and
-msgpack-test-suite to refcbor and cbor-test-vectors in phases 4/5.)"""
+cbor-test-vectors conformance check. (The differential test is skipped
+until phase 5 provides the in-repo refcbor reference.)"""
 
 import os
 
@@ -9,8 +9,6 @@ import pytest
 import subprocess
 
 from conftest import INTBIG_TESTS, LONGLONG, ROOT, micropython, run_mp
-
-PETER = ROOT / "third_party" / "micropython-msgpack"
 
 
 def test_run_tests_suite(flavour):
@@ -30,10 +28,9 @@ def test_run_tests_suite(flavour):
     assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
 
 
-@pytest.mark.skip(reason="phase 5: differential moves to refcbor")
+@pytest.mark.skip(reason="phase 5: differential moves to refcbor (in-repo)")
 def test_differential(bigint_flavour, quick):
-    out = run_mp(bigint_flavour, ROOT / "tests/diff/diff_ccbor.py", *(["quick"] if quick else []),
-                 path=[PETER])  # fmt: skip
+    out = run_mp(bigint_flavour, ROOT / "tests/diff/diff_ccbor.py", *(["quick"] if quick else []))
     assert "RESULT: OK" in out, out[-3000:]
 
 
@@ -44,9 +41,20 @@ def test_fuzz(bigint_flavour, quick):
     assert "RESULT: OK" in out, out[-3000:]
 
 
-def test_conformance(bigint_flavour):
-    suite = PETER.parent / "msgpack-test-suite" / "dist" / "msgpack-test-suite.json"
-    if not suite.exists():
-        pytest.skip("msgpack-test-suite submodule not fetched (replaced in phase 4)")
-    out = run_mp(bigint_flavour, ROOT / "tests/conformance/conformance.py", suite)
-    assert "RESULT: OK" in out, out
+def test_conformance(bigint_flavour, tmp_path):
+    """The cbor-test-vectors conformance, read from the .cbor sidecars and
+    converted to JSON on the host (edn2json.py); the MicroPython driver
+    checks every case and reports the exact skip count."""
+    vectors = ROOT / "third_party" / "cbor-test-vectors" / "tests"
+    if not vectors.exists():
+        pytest.skip("cbor-test-vectors submodule not fetched")
+    out = subprocess.run(
+        ["python3", str(ROOT / "tests" / "conformance" / "edn2json.py")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    json_path = tmp_path / "vectors.json"
+    json_path.write_text(out)
+    res = run_mp(bigint_flavour, ROOT / "tests/conformance/conformance.py", json_path, heap="256M")
+    assert "RESULT: OK" in res, res[-3000:]

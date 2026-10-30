@@ -8,10 +8,9 @@
 #
 #   micropython diff_ccbor.py [quick] [seed=N]
 #
-# Transitional: until phase 5 provides the in-repo CBOR reference codec, this
-# still runs against umsgpack (third_party/micropython-msgpack) and both sides
-# speak MessagePack. Phase 2 (the CBOR packer) switches this test off; phase 5
-# turns it back on against refcbor.
+# Dormant until phase 5 provides the in-repo refcbor codec (the umsgpack
+# reference and its submodule are gone); the test harness skips it until
+# then.
 #
 # Last line: "RESULT: OK <n> checks" or "RESULT: FAIL <n> mismatches".
 
@@ -20,7 +19,7 @@ import struct
 import sys
 
 import ccbor
-import umsgpack as refcbor  # transitional reference (see header)
+import refcbor  # the in-repo pure-Python reference (phase 5)
 
 try:
     from collections import OrderedDict, namedtuple

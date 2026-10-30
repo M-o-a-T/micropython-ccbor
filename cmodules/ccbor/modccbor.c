@@ -1466,8 +1466,11 @@ static size_t up_prealloc(unpacker_t *u, size_t n) {
 }
 
 // SIZE_MAX as n means an indefinite-length array: items until the BREAK
-// byte (0xff), which up_obj reports as MP_OBJ_SENTINEL.
-#define CCBOR_BREAK_SENTINEL MP_OBJ_FROM_PTR((void *)1)
+// byte (0xff). up_obj reports it with a sentinel that no real object can
+// ever be: a pointer to a static dummy (a small int is an immediate value,
+// so even int 0 must not collide with it).
+static const mp_obj_base_t ccbor_break_sentinel_obj = {&mp_type_object};
+#define CCBOR_BREAK_SENTINEL MP_OBJ_FROM_PTR(&ccbor_break_sentinel_obj)
 
 static mp_obj_t up_array(unpacker_t *u, size_t n) {
     bool indef = n == SIZE_MAX;
@@ -1578,10 +1581,11 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
     }
     for (size_t i = 0; indef || i < n; i++) {
         u->key = true;
-        mp_obj_t k = list_to_tuple(up_obj(u));
+        mp_obj_t k = up_obj(u);
         if (indef && k == CCBOR_BREAK_SENTINEL) {
-            break;
+            break; // the BREAK byte, not an object: check BEFORE inspecting it
         }
+        k = list_to_tuple(k);
         up_check_hashable(u, k);
         // A single lookup both detects a duplicate and reserves the slot. The
         // slot stays valid while the value is decoded: nothing else can reach

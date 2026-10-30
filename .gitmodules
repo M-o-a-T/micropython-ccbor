@@ -1,9 +1,6 @@
 [submodule "micropython"]
 	path = micropython
 	url = https://github.com/micropython/micropython.git
-[submodule "third_party/micropython-msgpack"]
-	path = third_party/micropython-msgpack
-	url = https://github.com/peterhinch/micropython-msgpack.git
 [submodule "third_party/cbor-test-vectors"]
 	path = third_party/cbor-test-vectors
 	url = https://github.com/cbor-wg/cbor-test-vectors.git
