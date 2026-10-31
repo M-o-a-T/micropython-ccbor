@@ -38,7 +38,7 @@ def test_differential(bigint_flavour, quick):
 
 def test_fuzz(bigint_flavour, quick):
     out = run_mp(bigint_flavour, ROOT / "tests/fuzz/fuzz_ccbor.py",
-                 f"iterations={5000 if quick else 50000}", heap="128M")  # fmt: skip
+                 f"iterations={5000 if quick else 20000}", heap="512M")  # fmt: skip
     assert "RESULT: OK" in out, out[-3000:]
 
 

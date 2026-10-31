@@ -1,21 +1,22 @@
 # Using ccbor
 
-`ccbor` is a [MessagePack](https://msgpack.org) serializer for MicroPython,
-written in C. Its API is the one of Peter Hinch's
-[ccbor-ref](https://github.com/peterhinch/micropython-msgpack), which is itself
-the API of the `json` module: if you know one of them, you already know
-`ccbor`.
+`ccbor` is a [CBOR (RFC 8949)](https://www.rfc-editor.org/rfc/rfc8949)
+serializer for [MicroPython](https://micropython.org), written in C. Its API
+follows the shape of the `json` module (and of Peter Hinch's umsgpack, of
+which the msgpackc 1.0 module was a drop-in replacement): `dumps`, `dump`,
+`loads`, `load`, streams, incremental decoding and a decorator for your own
+types.
 
 - [1. Quick tour](#1-quick-tour)
 - [2. Supported types](#2-supported-types)
 - [3. Functions](#3-functions)
 - [4. Options](#4-options)
 - [5. Exceptions](#5-exceptions)
-- [6. Extension types](#6-extension-types)
+- [6. Tags: your own and built-in types](#6-tags-your-own-and-built-in-types)
 - [7. Streams and incremental decoding](#7-streams-and-incremental-decoding)
 - [8. Asynchronous decoding (ALoader)](#8-asynchronous-decoding-aloader)
-- [9. Moving from ccbor-ref](#9-moving-from-ccbor-ref)
-- [10. Differences from ccbor-ref](#10-differences-from-ccbor-ref)
+- [9. Deterministic encoding and cbor2](#9-deterministic-encoding-and-cbor2)
+- [10. Differences from cbor2](#10-differences-from-cbor2)
 - [11. Limits and safety](#11-limits-and-safety)
 - [12. Build-time configuration](#12-build-time-configuration)
 
@@ -25,33 +26,42 @@ the API of the `json` module: if you know one of them, you already know
 import ccbor
 
 data = ccbor.dumps({"id": "sensor-01", "temp": 21.5, "ok": True, "raw": b"\x01\x02"})
-print(len(data))                # 36 bytes on a board (40 where floats are doubles)
-                                # the same record in JSON takes 60
+print(len(data))             # 33 bytes; the same record in JSON takes 60
 obj = ccbor.loads(data)      # {'id': 'sensor-01', 'temp': 21.5, ...}
 ```
 
 Send `data` over MQTT, UART, a socket or store it in a file: it is plain
-`bytes`, readable by any MessagePack library in any language (Python's
-`msgpack`, JavaScript's `@msgpack/msgpack`, Go, Rust, C...).
+`bytes`, readable by any CBOR library in any language (Python's `cbor2`,
+JavaScript, Go, Rust, C...). CBOR is what JSON would be if it were designed
+for machines: binary, typed, with `bytes`, 64-bit integers and a standard
+extension mechanism (tags).
 
 ## 2. Supported types
 
-| Python | MessagePack | Notes |
+| Python | CBOR | Notes |
 |---|---|---|
-| `None` | nil | |
+| `None` | null (22) | |
+| `...` (Ellipsis) | undefined (23) | both directions |
 | `bool` | true / false | |
-| `int` | int / uint, 8 to 64 bits | from `-2**63` to `2**64 - 1`; the smallest encoding is used |
-| `float` | float 32 or float 64 | see `force_float_precision` |
-| `str` | str | UTF-8 |
-| `bytes`, `bytearray` | bin | both unpack as `bytes` |
-| `list`, `tuple` | array | both unpack as `list` (or `tuple`, see `use_tuple`) |
-| `dict`, `OrderedDict` | map | unpack as `dict` (or `OrderedDict`, see `use_ordered_dict`) |
-| anything else | ext | with an [extension type](#6-extension-types) |
+| `int` | major types 0/1 | from `-2**64` to `2**64 - 1` in the shortest form; beyond that, bignum tags 2/3 (arbitrary precision, up to 128 bits) |
+| `float` | half/single/double | the **smallest exact** width, see [options](#4-options) |
+| `str` | text string (3) | UTF-8, validated on unpack |
+| `bytes`, `bytearray` | byte string (2) | both unpack as `bytes` |
+| `list`, `tuple` | array (4) | both unpack as `list` (or `tuple`, see `use_tuple`) |
+| `dict`, `OrderedDict` | map (5) | unpack as `dict` (or `OrderedDict`, see `use_ordered_dict`) |
+| `ccbor.Tag(n, v)` | tag (6) | the [tag wrapper](#6-tags-your-own-and-built-in-types) |
+| anything else | tag | with a [registered tag](#6-tags-your-own-and-built-in-types) |
 
 Subclasses of these types (and `namedtuple`) are packed like their base type.
 
 Any other object (a `set`, a `complex`, your own class...) raises
-`UnsupportedTypeException`, unless you register an extension type for it.
+`UnsupportedTypeException`, unless you register a tag for it.
+
+Decoding accepts everything the RFC allows, not only what this module
+produces: non-minimal integer and length encodings, indefinite-length
+strings, arrays and maps (`5f`/`7f`/`9f`/`bf` ... `ff`, chunked), and
+bignum tags 2/3 decode to plain `int` (on builds whose integers stop at
+64 bits they come back wrapped in `Tag(2, bytes)` / `Tag(3, bytes)`).
 
 ## 3. Functions
 
@@ -61,304 +71,299 @@ Pack `obj` and return the bytes.
 
 ### `ccbor.dump(obj, fp, **options)`
 
-Pack `obj` and write it to `fp`: any stream (a file, `io.BytesIO`, a socket,
-a UART) or any object with a `write(data)` method. The whole object is
-written with a single `write()`: if packing fails, nothing is written.
+Pack `obj` and write the bytes to `fp` in one `write()` call. `fp` is a
+stream with `write()` (any file, socket, UART...).
 
 ### `ccbor.loads(data, **options) -> object`
 
-Unpack one object from `data`: `bytes`, `bytearray` or `memoryview` (a
-`memoryview` avoids copying part of a larger buffer). Bytes after the end of
-the first object are ignored.
+Unpack one object from `data` (`bytes`, `bytearray`, `memoryview`...).
+Trailing bytes are ignored. Raises on corrupt data; never crashes or
+allocates what the data does not really contain.
 
 ### `ccbor.load(fp, **options) -> object`
 
-Unpack one object from `fp`: any stream, or any object with a `read(n)`
-method. It reads exactly the bytes of one object, so you can call it again to
-read the next one:
-
-```python
-import io, ccbor
-
-f = io.BytesIO()
-for reading in ({"t": 20.5}, {"t": 20.7}, {"t": 21.0}):
-    ccbor.dump(reading, f)
-f.seek(0)
-print(ccbor.load(f), ccbor.load(f), ccbor.load(f))
-```
+Read exactly the bytes of one object from `fp`, a stream with `read(n)`
+(a file, socket, UART; short reads are fine).
 
 ### `ccbor.Unpacker(**options)`
 
-Incremental decoder for data that arrives in pieces: see
-[section 7](#7-streams-and-incremental-decoding).
+Incremental decoding: `feed(data)` appends bytes, iterating the unpacker
+yields every complete object. See
+[7. Streams and incremental decoding](#7-streams-and-incremental-decoding).
 
-### `ccbor.ext_serializable(ext_type, example=None)`
+### `ccbor.tag_serializable(tag_number, example=None)`
 
-Class decorator that registers an extension type: see
-[section 6](#6-extension-types).
+Class decorator that registers a [tag](#6-tags-your-own-and-built-in-types)
+for your class, or (with `example=atype`) for a built-in type.
 
 ### `ccbor.ALoader(stream, **options)`
 
-Asynchronous decoder for an `asyncio.StreamReader`: see
-[section 8](#8-asynchronous-decoding-aloader).
+Asynchronous decoding of a stream, on top of `Unpacker`. See
+[8. Asynchronous decoding (ALoader)](#8-asynchronous-decoding-aloader).
 
 ### Constants
 
-- `ccbor.float_precision`: `"single"` or `"double"`, the precision of the
-  floats of this MicroPython build (most boards: `"single"`).
-- `ccbor.__version__`: the version of the module, e.g. `"1.0.0"`.
-- `ccbor.custom`, `ccbor.builtins`, `ccbor.packers`: the registered
-  extension types (as in ccbor-ref; for inspection).
+```python
+ccbor.Tag                    # the tag wrapper type
+ccbor.float_precision        # "double" or "single": this build's float width
+ccbor.custom                 # {your class: tag number}
+ccbor.builtins               # {built-in type: (packer class, tag number)}
+ccbor.tags                   # {tag number: class}
+ccbor.PackException          # base of the packing exceptions
+ccbor.UnpackException        # base of the unpacking exceptions
+```
 
 ## 4. Options
 
-Options are keyword arguments. Unknown options are accepted and passed on to
-the extension types (as ccbor-ref does).
+All options are keyword arguments; `Unpacker` takes the unpack options at
+construction, `ALoader` passes them through to the unpacker.
 
 ### Pack options (`dumps`, `dump`)
 
-| option | values | default |
+| option | values | effect |
 |---|---|---|
-| `force_float_precision` | `"single"`: floats as float 32 (5 bytes); `"double"`: as float 64 (9 bytes) | `ccbor.float_precision` |
-
-On a board with single precision floats there is nothing to gain from
-`"double"`. On a computer, `"single"` saves 4 bytes per float.
+| `canonical` | `True` | sort map keys like [cbor2](#9-deterministic-encoding-and-cbor2) |
+| `force_float_precision` | `"single"`, `"double"`, `"half"` | force the float width (with loss); the default uses the smallest exact width |
 
 ### Unpack options (`loads`, `load`, `Unpacker`, `ALoader`)
 
-| option | effect | default |
+| option | values | effect |
 |---|---|---|
-| `use_tuple=True` | arrays unpack as `tuple` instead of `list` | `False` |
-| `use_ordered_dict=True` | maps unpack as `collections.OrderedDict`, keeping the order of the data | `False` |
-| `allow_invalid_utf8=True` | a str that is not valid UTF-8 unpacks as `bytes` instead of raising | `False` |
+| `use_tuple` | `True` | arrays unpack as `tuple` instead of `list` |
+| `use_ordered_dict` | `True` | maps unpack as `OrderedDict` |
+| `allow_invalid_utf8` | `True` | invalid UTF-8 in a text string unpacks as `bytes` instead of raising `InvalidStringException` |
 
-`Unpacker` also takes `max_buffer_size` (see below), and `ALoader` takes
-`observer`.
+`Unpacker` also takes:
+
+| option | values | effect |
+|---|---|---|
+| `max_buffer_size` | bytes | bound on the buffered data of incomplete objects; `feed()` raises `ValueError` beyond it |
+
+The options given to `dumps`/`loads` reach the registered packer and
+unpacker methods as the `options` dict.
 
 ## 5. Exceptions
 
-The same classes as ccbor-ref, available as `ccbor.<name>`:
-
 ```
 Exception
- ├── PackException
- │    └── UnsupportedTypeException   an object cannot be packed (also: an
- │                                   unknown ext type when unpacking)
- └── UnpackException
-      ├── InsufficientDataException  the data ends before the object does
-      ├── InvalidStringException     a str that is not valid UTF-8
-      ├── InvalidCodeException      the reserved byte 0xc1
-      ├── UnhashableKeyException     a map key that cannot be a dict key
-      └── DuplicateKeyException      the same key twice in a map
+├── PackException                     packing (dumps, dump)
+│   └── UnsupportedTypeException      no encoder for this object
+└── UnpackException                   unpacking (loads, load)
+    ├── InsufficientDataException     the data ends in the middle of an object
+    ├── InvalidStringException        text string is not valid UTF-8
+    ├── InvalidCodeException         not-well-formed CBOR (bad code, stray BREAK)
+    ├── UnhashableKeyException        a map key cannot be hashed
+    └── DuplicateKeyException         a map repeats a key
 ```
 
-Other exceptions you may see: `TypeError` (wrong argument types),
-`ValueError` (an invalid `force_float_precision`, a full `Unpacker`),
-`RuntimeError` (nesting deeper than the limit, or a container modified by an
-extension type while it is being packed), `OSError` (stream errors) and
-`NotImplementedError` (an extension class without `packb`/`unpackb`).
+`UnsupportedTypeException` serves both directions: on pack for an object
+without an encoder, on unpack for an unassigned simple value (RFC 8949
+simple values beyond false/true/null/undefined are not supported).
 
-Catch `ccbor.UnpackException` to handle all errors caused by bad data:
+Two `RuntimeError`s are part of the contract, not bugs: `maximum recursion
+depth exceeded` (nesting or tag chains deeper than 32, see
+[11. Limits and safety](#11-limits-and-safety)) and
+`container changed size during packing` (a tag's `packb()` modified the
+object being packed).
 
-```python
-try:
-    msg = ccbor.loads(payload)
-except ccbor.UnpackException as e:
-    print("corrupt message:", repr(e))
-```
+## 6. Tags: your own and built-in types
 
-## 6. Extension types
-
-MessagePack can carry application-defined types, each identified by a number
-from -128 to 127 (negative numbers are reserved by the MessagePack spec; -1
-is the timestamp type). The data of an extension is any `bytes` you choose.
-
-### Your own classes
-
-Decorate the class with `ext_serializable(number)` and give it a `packb()`
-method returning `bytes` and a static `unpackb(data, options)` method:
+CBOR's extension mechanism: a small integer (0 to `2**64-1`) that says what
+the item that follows is. Tags replace the extension types of the msgpack
+edition, but with a real difference: **the content is a CBOR item**, not raw
+bytes. Your `packb()` returns any encodable object (a list, a map, bytes,
+an int...), and your `unpackb()` receives that object back.
 
 ```python
-import struct
 import ccbor
 
-@ccbor.ext_serializable(0x10)
-class Point3d:
-    def __init__(self, x, y, z):
-        self.v = (float(x), float(y), float(z))
+@ccbor.tag_serializable(100)          # any number you like (0..2**64-1)
+class Point:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
 
     def packb(self):
-        return struct.pack(">fff", *self.v)
+        return [self.x, self.y]       # packed as the tag's content
 
     @staticmethod
     def unpackb(data, options):
-        return Point3d(*struct.unpack(">fff", data))
+        return Point(*data)           # data is the decoded content: a list
 
-data = ccbor.dumps([Point3d(1, 2, 3), "label"])
-print(ccbor.loads(data))     # [<Point3d object at ...>, 'label']
+
+p = Point(3, 4)
+data = ccbor.dumps(p)                  # d8 64 82 03 04: tag(100), [3, 4]
+q = ccbor.loads(data)                 # Point(3, 4)
 ```
 
-Subclasses of a registered class are packed with its type number.
+`packb(self)` is called without arguments for your own classes, or as
+`packb(obj, options)` when the tag is registered for a built-in type (the
+`options` dict is what was passed to `dumps`). The same for `unpackb`:
+`unpackb(data, options)`.
+
+### Timestamps, the recipe
+
+The RFC's timestamp tags are not built in (as in umsgpack's ext types):
+register them yourself, exactly like any other tag:
+
+```python
+import time
+import ccbor
+
+@ccbor.tag_serializable(1)            # tag 1: seconds since the epoch
+class Timestamp:
+    def __init__(self, s):
+        self.s = s
+
+    def packb(self):
+        return int(self.s)            # an int: the tag's content
+
+    @staticmethod
+    def unpackb(data, options):
+        return Timestamp(data)         # data is the decoded int
+```
 
 ### Built-in types
 
-Give the type as second argument; `packb` is then a static method that
-receives the object and the pack options:
+A registered built-in type is packed through the tag whenever it appears,
+in priority over its native encoding (the umsgpack `mpk_*` trick):
 
 ```python
-@ccbor.ext_serializable(0x51, set)
-class Set:
+@ccbor.tag_serializable(80, complex)
+class Complex:
     @staticmethod
     def packb(obj, options):
-        return ccbor.dumps(list(obj))
+        return [obj.real, obj.imag]   # any encodable content
 
     @staticmethod
     def unpackb(data, options):
-        return set(ccbor.loads(data))
+        return complex(*data)
 
-print(ccbor.loads(ccbor.dumps({1, 2, 3})))   # {1, 2, 3}
+
+ccbor.dumps(1 + 2j)                    # d850 82 f93c00 f94000:
+                                      # tag(80), [1.0, 2.0] (exact as halves)
 ```
 
-A registered built-in type has priority over the native encoding, so you can
-for example make tuples come back as tuples (register `tuple`).
+### The Tag wrapper
 
-The numbers 0x50 to 0x5F are used by ccbor-ref's extension modules
-(`complex` 0x50, `set` 0x51, `tuple` 0x52, `bytearray` 0x53, `OrderedDict`
-0x54): use the same numbers to stay compatible with them.
+Tags that nobody registered decode to `Tag`, a small wrapper (compatible
+with moat's `Tag` and cbor2's `CBORTag`):
 
-Registrations last until the next soft reset.
+```python
+t = ccbor.loads(bytes.fromhex("c11a514b67b0"))
+t.tag, t.value                        # 1, 1363896240
+repr(t)                               # Tag(1, 1363896240)
+```
+
+A `Tag` instance also packs: `ccbor.dumps(ccbor.Tag(32, "a"))` writes
+`d8 20 6161`. Registering a number for a class does not change how `Tag`
+instances pack: they always encode their own number and content. Two tag
+numbers are special: **2 and 3** are the native bignum tags (registering
+them raises `ValueError`; their content must be a byte string), and
+**55799** is the self-describe tag, stripped on decode like cbor2 does.
 
 ## 7. Streams and incremental decoding
 
-Data that arrives in arbitrary pieces (UART, BLE, a socket) does not contain
-whole messages per read. `Unpacker` buffers what you feed it and returns the
-objects as soon as they are complete:
+`dump` and `load` are for whole objects on a stream. `Unpacker` is for data
+that arrives in pieces:
 
 ```python
-import ccbor
-from machine import UART
+u = ccbor.Unpacker()
 
-uart = UART(1, 115200)
-unpacker = ccbor.Unpacker(max_buffer_size=4096)
+def on_uart_data(data):
+    u.feed(data)
 
-while True:
-    data = uart.read()
-    if data:
-        unpacker.feed(data)
-        for msg in unpacker:      # every complete object, then stops
-            handle(msg)
+for obj in u:                # every complete object, as it arrives
+    handle(obj)
 ```
 
-| method | |
-|---|---|
-| `feed(data)` | append bytes (any buffer) |
-| iteration / `next(unpacker)` | the next complete object; iteration stops when none is complete yet |
-| `next_raw()` | the bytes of the next complete object without decoding it, or `None` |
-| `reset()` | discard all buffered data |
-| `len(unpacker)` | bytes buffered and not consumed yet |
-
-- `max_buffer_size=n` makes `feed()` raise `ValueError` rather than buffer
-  more than `n` bytes: a corrupt length cannot make the buffer grow without
-  limit. The default, 0, means no limit.
-- An object that fails to decode (for example an invalid string) raises its
-  exception and is skipped; the reserved byte 0xc1 raises
-  `InvalidCodeException` and is skipped. Decoding goes on with the next
-  object, so a stream can recover from noise.
-- Completeness is checked without decoding and without allocating, so
-  feeding byte by byte costs little.
+- `feed(data)` appends bytes; `len(u)` is the bytes buffered but not
+  consumed; `bool(u)` tells whether any are left.
+- Iteration raises the same exceptions as `loads` on corrupt data; the
+  offending bytes are consumed, so decoding continues with the next object.
+  A not-well-formed byte is skipped: the stream can resynchronise.
+- `next_raw()` returns the bytes of the next complete object without
+  decoding it (`None` if there is none yet).
+- `reset()` discards everything buffered.
+- `max_buffer_size=` bounds the memory used by incomplete data.
 
 ## 8. Asynchronous decoding (ALoader)
+
+`ccbor.ALoader` (in `ccbor_aio.py`, frozen into the firmware manifests)
+decodes the objects arriving on an asyncio `StreamReader`-like object:
 
 ```python
 import asyncio
 import ccbor
-from machine import UART
 
-async def receiver():
-    uart = UART(1, 115200)
-    async for msg in ccbor.ALoader(asyncio.StreamReader(uart)):
-        print("received", msg)
+async def main():
+    reader = asyncio.StreamReader(uart)
+    async for obj in ccbor.ALoader(reader):
+        handle(obj)
 
-asyncio.run(receiver())
+asyncio.run(main())
 ```
 
-- `await loader.load()` returns the next object; at the end of the stream it
-  raises `EOFError`. `async for` stops at the end of the stream, unless the
-  stream ends inside an object (then `EOFError` is raised).
-- `observer=callable`: called with the raw bytes of each object, then with
-  `b""`, before the object is returned (for example to compute a CRC).
-- ALoader is Python code (`python/ccbor_aio.py`), imported on first use
-  of `ccbor.ALoader`. The firmware built by this project includes it. If
-  you build your own firmware, freeze `python/ccbor_aio.py` or copy it to
-  the board (see [INSTALL.md](INSTALL.md#7-the-python-helpers)).
+It takes the unpack options, and an `observer=` callable that receives the
+raw bytes of every object (then `b""`, as umsgpack's ALoader did).
 
-Packing needs nothing special: `writer.write(ccbor.dumps(obj))`, then
-`await writer.drain()`.
+## 9. Deterministic encoding and cbor2
 
-## 9. Moving from ccbor-ref
+`ccbor.dumps` output is deterministic: the shortest possible integer,
+length and float encodings (RFC 8949's "preferred serialization"), no
+indefinite lengths, and NaN always as `f97e00`. Map keys keep the dict's
+order, like CPython's `json`.
 
-`ccbor` has the same functions, options, exceptions, decorator and output
-bytes as ccbor-ref. Two ways to switch:
+`canonical=True` additionally sorts map keys the way [cbor2](https://github.com/agronholm/cbor2)
+does, which makes the bytes reproducible across runs and languages:
 
-1. Change the import: `import ccbor as ccbor-ref`.
-2. Keep `import ccbor-ref` everywhere: copy the compatibility package
-   `python/ccbor-ref/` to the board (`/lib/ccbor-ref/__init__.py`). It forwards
-   everything to `ccbor`. ccbor-ref's extension modules (`mpk_complex.py`,
-   `mpk_set.py`, `mpk_tuple.py`, `mpk_bytearray.py`, `mpk_odict.py`) work
-   unchanged: copy the ones you use from
-   [ccbor-ref's repository](https://github.com/peterhinch/micropython-msgpack/tree/master/ccbor-ref)
-   into the same directory.
+```python
+ccbor.dumps({"b": 1, "a": 2})                    # insertion order
+ccbor.dumps({"b": 1, "a": 2}, canonical=True)    # "a" first
+```
 
-Data packed by one module unpacks with the other: the formats are the same.
+With `canonical=True` the output is byte-identical to cbor2's
+`dumps(obj, canonical=True)` for every value both can encode — verified
+over thousands of random objects by the interoperability test.
 
-## 10. Differences from ccbor-ref
+## 10. Differences from cbor2
 
-Measured by the differential test, which runs both modules on the same random
-objects and data (see [TESTING.md](TESTING.md)). Everything not listed here
-gives the same bytes, the same objects or the same exception and message.
-
-| | ccbor-ref | ccbor |
-|---|---|---|
-| corrupt length (e.g. a str "of 3 GB" in 10 bytes) | `MemoryError` (allocates the length first), or `OverflowError` on 32-bit ports | `InsufficientDataException` |
-| `str` subclass | `TypeError` on MicroPython | packed as its `str` value |
-| `loads(memoryview)` | `TypeError` | accepted |
-| order of the keys of an unpacked `dict` | insertion into an empty dict | the dict is presized; the order may differ (MicroPython dicts are unordered; use `use_ordered_dict`) |
-| `dump()` when packing fails | part of the data may already be written | nothing is written |
-| nesting | limited by the Python stack | limited to 32 levels, `RuntimeError` beyond |
-| a container changed by an ext `packb` while being packed | wrong data | `RuntimeError` |
-| `Unpacker` | - | incremental decoder |
-| `ALoader` | reads with `readexactly` | reads chunks into an `Unpacker`; the observer gets each object's bytes in one call |
+- Duplicate map keys raise `DuplicateKeyException` instead of keeping the
+  last one. (Security: a hostile document cannot silently overwrite keys.)
+- Tags 0/1 (dates) and other semantic tags are **not** converted: without a
+  registration they decode to `Tag(n, content)`. `Tag` is cbor2's `CBORTag`
+  in spirit: `Tag(1, 1363896240)` where cbor2 would give a `datetime`.
+- Bignum tags 2/3 decode to `int` (cbor2 does the same); on builds whose
+  integers stop at 64 bits they come back as `Tag(2, bytes)`.
+- Unassigned simple values (0-19, 32-255) raise `UnsupportedTypeException`
+  instead of returning a `CBORSimpleValue`.
+- The payload is not kept: NaN always decodes to the canonical `f97e00`
+  form's value, like cbor2's canonical encoding.
+- 55799 (self-describe) is stripped on decode, like cbor2.
 
 ## 11. Limits and safety
 
-`ccbor` is meant to decode data from the network, so bad data must never
-crash the board:
-
-- every length read from the data is checked against the data available
-  before anything is allocated or read;
-- nesting is limited to 32 levels (packing and unpacking), and on ports with
-  stack checking the C stack is checked at every level;
-- strings are validated as UTF-8 (as `str()` does);
-- if Python code run by an extension type modifies the data being packed or
-  unpacked, the change is detected instead of reading freed memory;
-- the module keeps no static state: a soft reset leaves nothing behind.
-
-All of this is exercised by the tests, including on an AddressSanitizer and
-UndefinedBehaviorSanitizer build.
+- Nesting (arrays, maps and tags) is limited to **32 levels** on the way in
+  and out: deeper structures raise `RuntimeError`, never a stack overflow.
+- Every length in the input is checked against the data really available
+  before it is used; a hostile document raises an exception instead of
+  allocating memory or reading out of bounds. Fuzzed under
+  AddressSanitizer and UBSan.
+- Map keys are hashable or rejected (`UnhashableKeyException`); a list key
+  becomes a tuple, recursively, as in the msgpack edition.
+- One platform note: MicroPython dictionaries treat `False` and `0` (and
+  `True` and `1`) as the **same key**, so a CBOR map using both cannot be
+  represented (the conformance suite counts this one case as a skip).
+- `dumps` allocates about the size of the output; `loads` allocates only
+  the decoded object (see [BENCHMARKS.md](BENCHMARKS.md)).
 
 ## 12. Build-time configuration
 
-| macro | default | |
+| option | default | meaning |
 |---|---|---|
-| `CCBOR_MAX_DEPTH` | 32 | maximum nesting of arrays and maps |
+| `CCBOR_MAX_DEPTH` | 32 | maximum nesting of arrays, maps and tags |
 | `CCBOR_REUSE_QSTR` | 1 | 1: a map key that already exists as a qstr is reused instead of copied; 0: always copy |
 
-About `CCBOR_REUSE_QSTR`: the keys of the messages an application handles
-are usually written in its code as literals (`msg["temp"]`), so they exist as
-qstrs, and reusing them saves an allocation per key. Only map keys are looked
-up: other strings rarely are qstrs, and a lookup that fails costs more than
-the copy.
-
-Set it in your board's `mpconfigboard.h`, or in the compiler flags
-(`CFLAGS_EXTRA=-DCCBOR_MAX_DEPTH=64` for the unix port). Each level takes
-80 to 128 bytes of C stack on an ESP32; the MicroPython task has 16 KiB.
+Both are compile-time defines (`CFLAGS_EXTRA=-DCCBOR_MAX_DEPTH=64` for the
+unix port). Each nesting level takes 80 to 128 bytes of C stack on an
+ESP32: 32 levels leave room for the VM, the GC and raising an exception at
+the deepest level.

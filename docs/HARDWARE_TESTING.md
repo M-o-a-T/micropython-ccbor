@@ -88,7 +88,7 @@ make bench-board BOARD=ESP32_GENERIC VARIANT=SPIRAM PORT=/dev/ttyUSB0
 ```
 
 `test-device` runs, on the board: the `run-tests.py` suite, the differential
-test against ccbor-ref, the msgpack-test-suite conformance and the fuzzer.
+test against refcbor, the cbor-test-vectors conformance and the fuzzer.
 `bench-board` saves the results in `docs/benchmarks/` and regenerates
 [BENCHMARKS.md](BENCHMARKS.md).
 

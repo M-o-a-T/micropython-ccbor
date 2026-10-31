@@ -74,5 +74,5 @@ revisions) firmware were tested on real boards; the others are built by the
 same CI job and pass the build, but were not run on hardware. \`SHA256SUMS\`
 lists the checksums of the files. To build for another board, or to add
 ccbor to your own firmware, see
-[docs/INSTALL.md](https://github.com/Tangerino/micropython-ccbor/blob/v$VERSION/docs/INSTALL.md).
+[docs/INSTALL.md](https://github.com/M-o-a-T/micropython-ccbor/blob/v$VERSION/docs/INSTALL.md).
 EOF

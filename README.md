@@ -6,13 +6,15 @@
 [![ESP32 | S3 | C3 | C6 | P4](https://img.shields.io/badge/ESP32-S3%20%7C%20C3%20%7C%20C6%20%7C%20P4-e7352c)](https://github.com/M-o-a-T/micropython-ccbor/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-`ccbor` is a binary serializer for [MicroPython](https://micropython.org),
-written in C as a user module. It is being converted from MessagePack to
-CBOR (RFC 8949); today the wire format is still MessagePack and the Python
-API is the one of Peter Hinch's excellent pure-Python
-[umsgpack](https://github.com/peterhinch/micropython-msgpack) — same
-functions, options and exceptions, but tens of times faster and allocating a
-fraction of the memory. The conversion to CBOR happens in the next commits.
+`ccbor` is a [CBOR (RFC 8949)](https://www.rfc-editor.org/rfc/rfc8949)
+serializer for [MicroPython](https://micropython.org), written in C as a
+user module. It began as `msgpackc`, a MessagePack accelerator with the API
+of Peter Hinch's excellent pure-Python
+[umsgpack](https://github.com/peterhinch/micropython-msgpack), and was
+converted to CBOR wholesale: the same `dumps`/`loads`/streams shape, but
+speaking CBOR — tags instead of extension types, half floats, bignums,
+indefinite lengths on the way in — tens of times faster than any pure-Python
+codec and allocating a fraction of the memory.
 
 ```python
 import ccbor
@@ -21,20 +23,19 @@ data = ccbor.dumps({"id": "sensor-01", "temp": 21.5, "ok": True, "raw": b"\x01\x
 obj = ccbor.loads(data)
 ```
 
-MessagePack is like JSON, but binary: smaller messages, a `bytes` type, and
-no text to parse. A `dict` that takes 60 bytes as JSON takes 36 as
-MessagePack, and any MessagePack library in any language reads it.
+CBOR is like JSON, but binary: smaller messages, a `bytes` type, 64-bit
+integers, and no text to parse. A `dict` that takes 60 bytes as JSON takes
+33 as CBOR, and any CBOR library in any language reads it. The output is
+deterministic (RFC 8949 preferred encodings), and byte-identical with
+[cbor2](https://github.com/agronholm/cbor2)'s canonical form.
 
 <!-- BENCH-SUMMARY -->
 
 Time to pack and unpack a list of 20 telemetry records (1 KiB), and heap allocated, per call ([all the figures](docs/BENCHMARKS.md)):
 
-| | ccbor dumps | reference dumps | | ccbor loads | reference loads | |
+| | ccbor dumps | ccbor-ref dumps | | ccbor loads | ccbor-ref loads | |
 |---|--:|--:|--:|--:|--:|--:|
-| ESP32, internal RAM | **1204 µs**, 1040 B | 147757 µs, 60928 B | **122.7x** faster | **3833 µs**, 3296 B | 97049 µs, 19680 B | **25.3x** faster |
-| ESP32, PSRAM | **2059 µs**, 1040 B | 169922 µs, 60928 B | **82.5x** faster | **5829 µs**, 3296 B | 118470 µs, 19680 B | **20.3x** faster |
-| ESP32-P4 | **323 µs**, 1040 B | 24668 µs, 60928 B | **76.3x** faster | **791 µs**, 3296 B | 17104 µs, 19680 B | **21.6x** faster |
-| unix port, Apple Silicon | **2.7 µs**, 1216 B | 196 µs, 120096 B | **74.0x** faster | **16.4 µs**, 5312 B | 169 µs, 38080 B | **10.3x** faster |
+| unix port, Apple Silicon | **4.0 µs**, 3680 B | 214 µs, 50848 B | **53.5x** faster | **15.4 µs**, 5312 B | 253 µs, 56896 B | **16.4x** faster |
 
 <!-- /BENCH-SUMMARY -->
 
@@ -42,9 +43,14 @@ Time to pack and unpack a list of 20 telemetry records (1 KiB), and heap allocat
 
 - `dumps`, `dump`, `loads`, `load`, with the options of the umsgpack API
   (`force_float_precision`, `use_tuple`, `use_ordered_dict`,
-  `allow_invalid_utf8`).
-- **Extension types** with the same `@ext_serializable` decorator, for your
-  classes and for built-in types such as `set` or `complex`.
+  `allow_invalid_utf8`) plus `canonical=` for cbor2-compatible key order.
+- **CBOR tags** with the `@tag_serializable` decorator, for your classes and
+  for built-in types such as `set` or `complex`: the content is a CBOR item,
+  not raw bytes. Unregistered tags decode to a `Tag` wrapper (compatible
+  with moat's `Tag` and cbor2's `CBORTag`).
+- **Full CBOR on the way in**: non-minimal encodings, indefinite-length
+  strings, arrays and maps; bignum tags 2/3 to `int`; half floats expanded;
+  `undefined` as `Ellipsis`.
 - **Streams**: `load` reads exactly one object from a file, socket or UART;
   `dump` writes it in one call.
 - **Incremental decoding** with `Unpacker`, for data that arrives in pieces,
@@ -52,10 +58,12 @@ Time to pack and unpack a list of 20 telemetry records (1 KiB), and heap allocat
 - **Safe on untrusted data**: corrupt or hostile input raises an exception;
   it never crashes the board nor allocates memory it does not need. Tested
   with fuzzing under AddressSanitizer and UndefinedBehaviorSanitizer.
-- Tested on the unix port and on real ESP32 and ESP32-P4 boards; will
-  conform to the cross-language
-  [cbor-test-vectors](https://github.com/cbor-wg/cbor-test-vectors) and
-  interoperate with [cbor2](https://github.com/agronholm/cbor2) (phases 4/5).
+- Tested on the unix port; conforms to the cross-language
+  [cbor-test-vectors](https://github.com/cbor-wg/cbor-test-vectors) (1381
+  cases) and interoperates with [cbor2](https://github.com/agronholm/cbor2),
+  both directions, byte for byte in canonical form. The 1.0.0 MessagePack
+  release ran its whole suite on real ESP32 and ESP32-P4 boards; the board
+  pass of the CBOR edition is pending hardware.
 - About 12 KiB of flash (15 KiB on RISC-V chips), no RAM reserved, no configuration.
 
 ## Getting started
@@ -97,7 +105,7 @@ make USER_C_MODULES=/path/to/micropython-ccbor/cmodules                     # un
 | [docs/INSTALL.md](docs/INSTALL.md) | building and flashing, for beginners |
 | [docs/USAGE.md](docs/USAGE.md) | the API, with examples |
 | [docs/TESTING.md](docs/TESTING.md) | how ccbor is tested, and the results |
-| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | speed and memory on the unix port, ESP32 and ESP32-P4 |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | speed and memory on the unix port (board figures pending hardware) |
 | [docs/HARDWARE_TESTING.md](docs/HARDWARE_TESTING.md) | testing on a board without losing what is on it |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | how to contribute |
 
@@ -106,16 +114,21 @@ make USER_C_MODULES=/path/to/micropython-ccbor/cmodules                     # un
 ```
 cmodules/                     the module: all you need to add it to a firmware
   micropython.cmake           entry point for USER_C_MODULES (CMake ports)
-  ccbor/modccbor.c      the code
+  ccbor/modccbor.c            the code
 python/
-  ccbor_aio.py             ccbor.ALoader (asyncio)
+  ccbor_aio.py                ccbor.ALoader (asyncio)
+tests/
+  mp/                         the run-tests.py suite
+  diff/                       refcbor (the pure-Python reference) and the
+                              differential test against it
+  conformance/                the cbor-test-vectors driver and converter
+  fuzz/                       the fuzzer (for the sanitizer build)
+  host/                       the pytest harness (interop, oracle gate, ...)
 firmware/                     manifests of the firmware built here
-tests/                        test programs (see docs/TESTING.md)
 bench/bench.py                the benchmark
 tools/                        build, flash, test and benchmark scripts
 micropython/                  MicroPython v1.29.0 (git submodule)
-third_party/                  cbor-test-vectors, for the tests (submodule); micropython-msgpack
-                              stays until the differential test moves to the in-repo reference
+third_party/                  cbor-test-vectors, for the tests (submodule)
 ```
 
 The ESP-IDF and the Espressif toolchains are installed in `tools/esp-idf`
@@ -138,9 +151,15 @@ This project stands on the work of others, with gratitude:
   MicroPython started it.
 - **Damien George and the MicroPython contributors**, for
   [MicroPython](https://github.com/micropython/micropython).
-- **Yusuke Kawasaki**, for the [msgpack-test-suite](https://github.com/kawanet/msgpack-test-suite).
+- **Yusuke Kawasaki**, for the [msgpack-test-suite](https://github.com/kawanet/msgpack-test-suite)
+  (the conformance corpus of the 1.0.0 MessagePack release).
 - **Sadayuki Furuhashi** and the MessagePack community, for the
   [format](https://github.com/msgpack/msgpack/blob/master/spec.md).
+- **C. Bormann** and the CBOR WG, for [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949)
+  and the [cbor-test-vectors](https://github.com/cbor-wg/cbor-test-vectors)
+  corpus.
+- **Alex Grönholm**, for [cbor2](https://github.com/agronholm/cbor2), the
+  reference the tests interoperate with.
 
 `ccbor` began as the MessagePack encoder written in C for the firmware of
 the coIoTe IoT devices, as an accelerator of their Python packer; it was then

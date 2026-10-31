@@ -24,24 +24,24 @@
  * THE SOFTWARE.
  */
 
-// ccbor: a binary serializer for MicroPython, written in C.
+// ccbor: CBOR (RFC 8949) for MicroPython, written in C.
 //
-// This is the MessagePack edition: the wire format is MessagePack
-// (https://msgpack.org) and the Python API and its behaviour follow Peter
-// Hinch's pure-Python umsgpack
-// (https://github.com/peterhinch/micropython-msgpack), itself a port of Vanya
-// Sergeev's u-msgpack-python. Same functions, options, exceptions and
-// ext_serializable decorator, and byte-for-byte identical output, so one can
-// replace the other. The encoder started as the msgpack accelerator of the
-// coIoTe firmware. The module is being converted to CBOR (RFC 8949); this
-// comment will go with it.
+// The Python API follows the shape of Peter Hinch's pure-Python umsgpack
+// (https://github.com/peterhinch/micropython-msgpack) - dumps/dump/loads/
+// load, Unpacker, ALoader, the options - because the module began as
+// msgpackc, a MessagePack accelerator with umsgpack's exact behaviour, and
+// was converted to CBOR. What is CBOR's own: the wire format (major types
+// 0-7, preferred encodings), tags instead of extension types (the content
+// is a CBOR item, not raw bytes), bignums, half floats, indefinite lengths
+// on the way in, undefined <-> Ellipsis, and a canonical= option whose
+// output is byte-identical with cbor2's canonical form.
 //
 // Design notes:
 // - The encoder writes into a single growable buffer which becomes the
 //   returned bytes object without a copy.
 // - The decoder reads either straight from a buffer (loads, Unpacker) without
 //   copying, or from a stream (load) reading exactly the bytes it needs.
-// - Nothing is static state: the ext type registry lives in a heap module
+// - Nothing is static state: the tag registry lives in a heap module
 //   placed in sys.modules, so a soft reset discards it with everything else.
 // - Every length taken from the input is checked against the data really
 //   available before it is used, so corrupt or hostile input raises an
@@ -173,13 +173,14 @@ static inline bool len_exceeds_u32(size_t n) {
 }
 
 /******************************************************************************/
-// Ext type registry (the ext_serializable decorator).
+// Tag registry (the tag_serializable decorator).
 //
-// umsgpack keeps three dicts: custom {user class: ext_type},
-// builtins {type: (packer class, tag number)} and tags {tag number: class}.
-// They are kept here as attributes of a heap module "_ccbor_ext" stored in
-// sys.modules: no root pointers are needed, and a soft reset (which empties
-// sys.modules) drops them together with the classes they refer to.
+// Three dicts: custom {user class: tag number},
+// builtins {type: (packer class, tag number)} and tags {tag number: class}
+// (the shape is umsgpack's, the mechanism is CBOR's). They are kept here as
+// attributes of a heap module "_ccbor_ext" stored in sys.modules: no root
+// pointers are needed, and a soft reset (which empties sys.modules) drops
+// them together with the classes they refer to.
 
 static mp_obj_t ext_registry(bool create) {
     mp_map_t *mods = &MP_STATE_VM(mp_loaded_modules_dict).map;

@@ -24,3 +24,6 @@ require("upysh")
 
 module("_boot.py", base_path="testboot")
 module("ccbor_aio.py", base_path="../python")
+# refcbor: the pure-Python reference for the differential tests (and the
+# benchmark's ccbor-ref column), frozen so it runs at full speed on a board.
+module("refcbor.py", base_path="../tests/diff")

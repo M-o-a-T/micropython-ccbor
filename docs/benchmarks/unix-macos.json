@@ -1,223 +1,223 @@
 {
  "label": "unix-macos",
- "description": "Apple Silicon Mac (arm64), unix port, standard build (double precision floats)",
- "platform": "darwin",
- "host": "Darwin arm64",
+ "description": "linux",
+ "platform": "linux",
+ "host": "Linux x86_64",
  "float": "double",
- "date": "2026-10-18",
+ "date": "2026-10-31",
  "results": [
   {
    "dumps_alloc": 64,
    "loads_alloc": 0,
-   "dumps_us": 0.08551502227783203,
-   "loads_us": 0.02483987808227539,
+   "dumps_us": 0.0830678939819336,
+   "loads_us": 0.0387115478515625,
    "payload": "int",
    "lib": "ccbor",
-   "size": 1
+   "size": 2
   },
   {
-   "dumps_alloc": 608,
-   "loads_alloc": 224,
-   "dumps_us": 0.7695331573486328,
-   "loads_us": 0.5251598358154297,
+   "dumps_alloc": 160,
+   "loads_alloc": 288,
+   "dumps_us": 0.5502643585205078,
+   "loads_us": 0.8517532348632812,
    "payload": "int",
    "lib": "ccbor-ref",
-   "size": 1
+   "size": 2
   },
   {
    "dumps_alloc": 64,
    "loads_alloc": 0,
-   "dumps_us": 0.31730175018310547,
-   "loads_us": 0.061112403869628906,
+   "dumps_us": 0.32083702087402344,
+   "loads_us": 0.06676197052001953,
    "payload": "int",
    "lib": "json",
    "size": 2
   },
   {
-   "dumps_alloc": 96,
+   "dumps_alloc": 224,
    "loads_alloc": 256,
-   "dumps_us": 0.1649017333984375,
-   "loads_us": 0.8439483642578125,
+   "dumps_us": 0.234832763671875,
+   "loads_us": 0.8018112182617188,
    "payload": "telemetry",
    "lib": "ccbor",
-   "size": 59
+   "size": 54
   },
   {
-   "dumps_alloc": 6112,
-   "loads_alloc": 1984,
-   "dumps_us": 9.34454345703125,
-   "loads_us": 8.436279296875,
+   "dumps_alloc": 2336,
+   "loads_alloc": 2912,
+   "dumps_us": 10.512451171875,
+   "loads_us": 12.52899169921875,
    "payload": "telemetry",
    "lib": "ccbor-ref",
-   "size": 59
+   "size": 54
   },
   {
    "dumps_alloc": 128,
    "loads_alloc": 256,
-   "dumps_us": 1.197967529296875,
-   "loads_us": 12.881103515625,
+   "dumps_us": 1.2668571472167969,
+   "loads_us": 8.348388671875,
    "payload": "telemetry",
    "lib": "json",
    "size": 88
   },
   {
-   "dumps_alloc": 1216,
+   "dumps_alloc": 3680,
    "loads_alloc": 5312,
-   "dumps_us": 2.6551971435546875,
-   "loads_us": 16.4091796875,
+   "dumps_us": 4.00341796875,
+   "loads_us": 15.4012451171875,
    "payload": "telemetry x20",
    "lib": "ccbor",
-   "size": 1183
+   "size": 1081
   },
   {
-   "dumps_alloc": 120096,
-   "loads_alloc": 38080,
-   "dumps_us": 196.3818359375,
-   "loads_us": 169.3857421875,
+   "dumps_alloc": 50848,
+   "loads_alloc": 56896,
+   "dumps_us": 214.0341796875,
+   "loads_us": 253.154296875,
    "payload": "telemetry x20",
    "lib": "ccbor-ref",
-   "size": 1183
+   "size": 1081
   },
   {
    "dumps_alloc": 1856,
    "loads_alloc": 5440,
-   "dumps_us": 20.48297119140625,
-   "loads_us": 63.818359375,
+   "dumps_us": 22.26416015625,
+   "loads_us": 50.08984375,
    "payload": "telemetry x20",
    "lib": "json",
    "size": 1810
   },
   {
-   "dumps_alloc": 384,
+   "dumps_alloc": 1376,
    "loads_alloc": 1984,
-   "dumps_us": 0.8921089172363281,
-   "loads_us": 4.39208984375,
+   "dumps_us": 1.4936027526855469,
+   "loads_us": 4.2472076416015625,
    "payload": "config",
    "lib": "ccbor",
-   "size": 348
+   "size": 337
   },
   {
-   "dumps_alloc": 47776,
-   "loads_alloc": 16576,
-   "dumps_us": 75.86328125,
-   "loads_us": 62.483154296875,
+   "dumps_alloc": 12192,
+   "loads_alloc": 19456,
+   "dumps_us": 68.505859375,
+   "loads_us": 83.248779296875,
    "payload": "config",
    "lib": "ccbor-ref",
-   "size": 348
+   "size": 337
   },
   {
    "dumps_alloc": 640,
    "loads_alloc": 1888,
-   "dumps_us": 6.27783203125,
-   "loads_us": 29.231201171875,
+   "dumps_us": 6.836578369140625,
+   "loads_us": 33.4970703125,
    "payload": "config",
    "lib": "json",
    "size": 589
   },
   {
-   "dumps_alloc": 384,
+   "dumps_alloc": 352,
    "loads_alloc": 832,
-   "dumps_us": 0.7624168395996094,
-   "loads_us": 0.5905570983886719,
+   "dumps_us": 0.7795448303222656,
+   "loads_us": 0.6871414184570312,
    "payload": "int list x100",
    "lib": "ccbor",
-   "size": 343
+   "size": 314
   },
   {
-   "dumps_alloc": 42912,
-   "loads_alloc": 20928,
-   "dumps_us": 72.222412109375,
-   "loads_us": 68.214599609375,
+   "dumps_alloc": 14112,
+   "loads_alloc": 23840,
+   "dumps_us": 58.315673828125,
+   "loads_us": 85.58984375,
    "payload": "int list x100",
    "lib": "ccbor-ref",
-   "size": 343
+   "size": 314
   },
   {
    "dumps_alloc": 768,
    "loads_alloc": 1056,
-   "dumps_us": 4.4524383544921875,
-   "loads_us": 27.422119140625,
+   "dumps_us": 4.8353424072265625,
+   "loads_us": 19.889404296875,
    "payload": "int list x100",
    "lib": "json",
    "size": 723
   },
   {
-   "dumps_alloc": 960,
+   "dumps_alloc": 928,
    "loads_alloc": 4032,
-   "dumps_us": 1.4386672973632812,
-   "loads_us": 2.3654632568359375,
+   "dumps_us": 1.8451614379882812,
+   "loads_us": 1.972259521484375,
    "payload": "float list x100",
    "lib": "ccbor",
-   "size": 903
+   "size": 878
   },
   {
-   "dumps_alloc": 44064,
-   "loads_alloc": 20928,
-   "dumps_us": 77.158203125,
-   "loads_us": 57.6240234375,
+   "dumps_alloc": 32736,
+   "loads_alloc": 27424,
+   "dumps_us": 126.1943359375,
+   "loads_us": 95.96533203125,
    "payload": "float list x100",
    "lib": "ccbor-ref",
-   "size": 903
+   "size": 878
   },
   {
-   "dumps_alloc": 1312,
+   "dumps_alloc": 1344,
    "loads_alloc": 4256,
-   "dumps_us": 23.9736328125,
-   "loads_us": 57.012939453125,
+   "dumps_us": 16.75604248046875,
+   "loads_us": 43.87353515625,
    "payload": "float list x100",
    "lib": "json",
-   "size": 1278
+   "size": 1300
   },
   {
    "dumps_alloc": 448,
    "loads_alloc": 3648,
-   "dumps_us": 0.7473716735839844,
-   "loads_us": 2.5431137084960938,
+   "dumps_us": 0.7924995422363281,
+   "loads_us": 1.8833541870117188,
    "payload": "str list x50",
    "lib": "ccbor",
-   "size": 393
+   "size": 392
   },
   {
-   "dumps_alloc": 23840,
-   "loads_alloc": 9216,
-   "dumps_us": 38.544921875,
-   "loads_us": 42.5108642578125,
+   "dumps_alloc": 7808,
+   "loads_alloc": 12128,
+   "dumps_us": 39.998291015625,
+   "loads_us": 51.98046875,
    "payload": "str list x50",
    "lib": "ccbor-ref",
-   "size": 393
+   "size": 392
   },
   {
    "dumps_alloc": 576,
    "loads_alloc": 3744,
-   "dumps_us": 6.333740234375,
-   "loads_us": 96.603271484375,
+   "dumps_us": 6.56292724609375,
+   "loads_us": 41.205078125,
    "payload": "str list x50",
    "lib": "json",
    "size": 540
   },
   {
-   "dumps_alloc": 640,
+   "dumps_alloc": 2368,
    "loads_alloc": 8032,
-   "dumps_us": 1.42523193359375,
-   "loads_us": 30.3985595703125,
+   "dumps_us": 2.1243133544921875,
+   "loads_us": 33.6026611328125,
    "payload": "map x100",
    "lib": "ccbor",
-   "size": 603
+   "size": 678
   },
   {
-   "dumps_alloc": 91488,
-   "loads_alloc": 27968,
-   "dumps_us": 135.37451171875,
-   "loads_us": 158.49560546875,
+   "dumps_alloc": 19744,
+   "loads_alloc": 41760,
+   "dumps_us": 115.35693359375,
+   "loads_us": 226.9267578125,
    "payload": "map x100",
    "lib": "ccbor-ref",
-   "size": 603
+   "size": 678
   },
   {
    "dumps_alloc": 1248,
    "loads_alloc": 8480,
-   "dumps_us": 11.98095703125,
-   "loads_us": 147.010498046875,
+   "dumps_us": 12.3648681640625,
+   "loads_us": 107.50048828125,
    "payload": "map x100",
    "lib": "json",
    "size": 1190
@@ -225,17 +225,17 @@
   {
    "dumps_alloc": 1088,
    "loads_alloc": 1088,
-   "dumps_us": 1.0287284851074219,
-   "loads_us": 0.9754295349121094,
+   "dumps_us": 1.0134201049804688,
+   "loads_us": 0.9630584716796875,
    "payload": "bytes 1 KiB",
    "lib": "ccbor",
    "size": 1027
   },
   {
-   "dumps_alloc": 2688,
-   "loads_alloc": 1376,
-   "dumps_us": 2.0302047729492188,
-   "loads_us": 1.7156295776367188,
+   "dumps_alloc": 17664,
+   "loads_alloc": 1440,
+   "dumps_us": 28.1234130859375,
+   "loads_us": 2.0312118530273438,
    "payload": "bytes 1 KiB",
    "lib": "ccbor-ref",
    "size": 1027

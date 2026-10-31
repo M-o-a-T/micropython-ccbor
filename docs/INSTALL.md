@@ -71,7 +71,7 @@ make setup
 
 This fetches the libraries MicroPython needs, builds `mpy-cross` (the
 MicroPython compiler) and creates a Python environment in `.venv/` with the
-test and board tools (`mpremote`, `pytest`, `msgpack`...). It takes a few
+test and board tools (`mpremote`, `pytest`, `cbor2`...). It takes a few
 minutes the first time and does not touch the rest of your system.
 
 ## 4. Try ccbor on your computer

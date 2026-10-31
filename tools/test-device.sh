@@ -4,7 +4,7 @@
 #
 # Usage: tools/test-device.sh PORT [--quick]
 #   1. the run-tests.py suite (tests/mp), the official MicroPython test runner
-#   2. the differential test against refcbor (to come in phase 5)
+#   2. the differential test against refcbor (frozen into the test firmware)
 #   3. the cbor-test-vectors conformance
 #   4. the fuzzer, on the real hardware
 set -euo pipefail

@@ -8,10 +8,10 @@ angles, each able to catch what the others miss.
 - [Summary](#summary)
 - [Running the tests](#running-the-tests)
 - [1. The run-tests.py suite](#1-the-run-testspy-suite)
-- [2. Differential test against ccbor-ref](#2-differential-test-against-ccbor-ref)
-- [3. ccbor-ref's own test suite](#3-ccbor-refs-own-test-suite)
-- [4. Conformance: msgpack-test-suite](#4-conformance-msgpack-test-suite)
-- [5. Interoperability with msgpack-python](#5-interoperability-with-msgpack-python)
+- [2. The refcbor oracle gate](#2-the-refcbor-oracle-gate)
+- [3. Differential test against refcbor](#3-differential-test-against-refcbor)
+- [4. Conformance: cbor-test-vectors](#4-conformance-cbor-test-vectors)
+- [5. Interoperability with cbor2](#5-interoperability-with-cbor2)
 - [6. Fuzzing under sanitizers](#6-fuzzing-under-sanitizers)
 - [7. Coverage](#7-coverage)
 - [8. Memory](#8-memory)
@@ -22,22 +22,22 @@ angles, each able to catch what the others miss.
 
 ## Summary
 
-Results of version 1.0.0 (2026-10-18), all passing:
+Results of the CBOR rewrite (2026-10-31), all passing:
 
-| test | unix port | ESP32 | ESP32-P4 |
-|---|---|---|---|
-| [run-tests.py suite](#1-the-run-testspy-suite) (13 files, ~290 cases) | standard, float32, sanitize, coverage, longlong (10 files), minimal (build) | 12/12 with and without PSRAM (`large` skipped: heap) | 13/13 |
-| [differential vs ccbor-ref](#2-differential-test-against-ccbor-ref) | ~178,000 checks per run, on every build; 2.3 million during development | 3 seeds | 3 seeds |
-| [ccbor-ref's own suite](#3-ccbor-refs-own-test-suite) | same results as ccbor-ref | | |
-| [msgpack-test-suite](#4-conformance-msgpack-test-suite) | 318/318, double and single floats | 318/318 | 318/318 |
-| [interoperability with msgpack-python](#5-interoperability-with-msgpack-python) | 6,000 objects both ways per build, identical encodings | | |
-| [fuzzing](#6-fuzzing-under-sanitizers) | ASan + UBSan (clang, and gcc on Linux): 100,000 iterations per run, 1 million during development | 5,000 iterations | 5,000 iterations |
-| [coverage](#7-coverage) | 99.1% of lines, 100% of branches executed, 95.9% taken both ways | | |
-| [memory](#8-memory) | no leak; bounded allocation | no leak | no leak |
+| test | unix port | boards |
+|---|---|---|
+| [run-tests.py suite](#1-the-run-testspy-suite) (13 files, ~380 cases) | standard, float32, sanitize | to be re-measured (no board in this cycle) |
+| [refcbor oracle gate](#2-the-refcbor-oracle-gate) | 2000 objects + appendix A vectors, byte-identical with cbor2 | (host only) |
+| [differential vs refcbor](#3-differential-test-against-refcbor) | ~1600 checks per quick run, several seeds | to be re-measured |
+| [cbor-test-vectors](#4-conformance-cbor-test-vectors) | 1998 checks, 0 fails, 80 accounted skips (1381 vector cases) | to be re-measured |
+| [interoperability with cbor2](#5-interoperability-with-cbor2) | 6000 objects both ways, identical canonical encodings | (host only) |
+| [fuzzing](#6-fuzzing-under-sanitizers) | ASan + UBSan: 10,000 iterations per run | to be re-measured |
+| [coverage](#7-coverage) | see `make coverage` | |
+| [memory](#8-memory) | no leak; bounded allocation | to be re-measured |
 
-Linux was checked in Ubuntu 24.04 containers (`tools/docker-ci.sh`): x86-64
-standard, 32-bit `longlong` and `minimal`, and on ARM64 the gcc sanitizer
-build.
+The board columns of the 1.0.0 (MessagePack) release are in its CHANGELOG;
+the ESP32/ESP32-P4 figures will be re-measured with hardware in the next
+cycle and the tables in [BENCHMARKS.md](BENCHMARKS.md) extended then.
 
 ## Running the tests
 
@@ -58,184 +58,163 @@ MicroPython program on a unix build of the module. Select the builds with
 ## 1. The run-tests.py suite
 
 `tests/mp/` holds the test programs in MicroPython's own format: a script and
-its expected output (`.exp`), run by MicroPython's test runner
-`micropython/tests/run-tests.py`, unchanged, on the unix port and on the
-boards. The tests are self-checking: the expected bytes come from the
-[MessagePack specification](https://github.com/msgpack/msgpack/blob/master/spec.md)
-and are written in the test, so the `.exp` files mostly say `ok`.
+its expected output, run by MicroPython's `run-tests.py`. They cover, per
+file: `ccbor_pack` (every RFC 8949 format at every size boundary, the
+appendix A vectors), `ccbor_unpack` (every format on the way in, including
+non-minimal and indefinite-length encodings, the options), `ccbor_tag` (the
+decorator, user and built-in classes, the Tag wrapper), `ccbor_unpacker`
+(incremental decoding, chunk by chunk), `ccbor_safety` (hostile input, deep
+nesting, containers mutated from Python), `ccbor_stream`, `ccbor_int64` (the
+64-bit limits, bignums), `ccbor_large` (the wide length headers), `ccbor_memory`,
+`ccbor_errors` (every exception's type and message), `ccbor_subclass`,
+`ccbor_edge`, `ccbor_aloader` (asyncio, where available).
 
-| file | covers |
-|---|---|
-| `ccbor_pack.py` | every format family at every size boundary |
-| `ccbor_unpack.py` | every format, including non-minimal encodings, options, input types |
-| `ccbor_errors.py` | the exception hierarchy, every error and its message |
-| `ccbor_ext.py` | extension types: every header size, user classes, built-ins, registry, errors |
-| `ccbor_stream.py` | `dump`/`load` on native streams and Python file-like objects, short reads |
-| `ccbor_unpacker.py` | `Unpacker` with every chunk size, `next_raw`, resynchronisation, limits |
-| `ccbor_aloader.py` | `ALoader` with asyncio, observer, end of stream |
-| `ccbor_subclass.py` | subclasses of the native types, `namedtuple`, `OrderedDict` |
-| `ccbor_safety.py` | hostile input: nesting, cycles, huge lengths, every truncation, data changed by callbacks |
-| `ccbor_memory.py` | no leak; heap allocated per call |
-| `ccbor_edge.py` | error paths found with the coverage build |
-| `ccbor_large.py` | the 32-bit length formats (skipped on small heaps) |
+## 2. The refcbor oracle gate
 
-## 2. Differential test against ccbor-ref
+[`refcbor`](../tests/diff/refcbor.py) is the pure-Python CBOR codec used as
+the differential reference. Before it can be trusted as an oracle it must
+agree with [cbor2](https://github.com/agronholm/cbor2), the reference
+implementation for CPython: `tests/host/test_refcbor.py` runs it on the host
+and checks byte-identical canonical packing on thousands of random objects,
+the RFC 8949 appendix A vectors, and decode agreement both ways. Only after
+this gate does the differential test use it.
 
-`tests/diff/diff_ccbor-ref.py` runs ccbor and ccbor-ref side by side on the
-same inputs and compares everything: the bytes produced by `dumps` and
-`dump`, the objects returned by `loads` and `load`, and for errors the
-exception type **and** message. Inputs:
+## 3. Differential test against refcbor
 
-- random objects of every supported and unsupported type, nested, with
-  sizes around every format boundary, subclasses, extension types;
-- random bytes, valid messages, and valid messages mutated (bytes changed,
-  inserted, truncated, bits flipped);
-- every load option and float precision.
+`tests/diff/diff_ccbor.py` runs under MicroPython with both modules
+importable. Random objects are packed by both and must give the same bytes
+or the same exception (name and message); random, valid, mutated and
+truncated byte strings are unpacked by both and must give equal objects
+(up to the Tag class and float width) or the same exception. The PRNG is
+seeded, so a run is reproducible; several seeds ran during development.
 
-The generator is seeded, so a failure can be replayed. A full run is about
-178,000 checks; it runs with several seeds on each build and, shorter, on
-each board.
+This test found a real bug in the C module: a BREAK byte inside a *definite*
+container nested in an indefinite one leaked as a sentinel item
+(`9f 91 ff ...` silently ended a 17-item array).
 
-The only differences found are deliberate, and listed in
-[USAGE.md](USAGE.md#10-differences-from-ccbor-ref). The most important: where
-ccbor-ref raises `MemoryError` or `OverflowError` on a corrupt length (it
-allocates the length before reading), ccbor raises
-`InsufficientDataException`. Those cases are counted by the test ("MemoryError
-avoided"): around 1,500 per full run.
+## 4. Conformance: cbor-test-vectors
 
-## 3. ccbor-ref's own test suite
+[cbor-test-vectors](https://github.com/cbor-wg/cbor-test-vectors) is the
+CBOR working group's corpus. We read its **`.cbor` sidecars** — the repo's
+own README recommends them if you don't want an EDN parser — converting
+them on the host with cbor2 (`tests/conformance/edn2json.py`, which fails
+loudly on anything unexpected) into JSON for the MicroPython driver
+(`tests/conformance/conformance.py`).
 
-Peter Hinch's `test_ccbor-ref.py` (from u-msgpack-python, 132 test
-vectors in 14 tests) runs on ccbor through the `ccbor-ref` compatibility package, with
-ccbor-ref's own `mpk_*.py` extension modules. On MicroPython, ccbor-ref itself
-fails 2 of its 14 tests (they compare an `OrderedDict` with a `dict`, which
-MicroPython does not consider equal); ccbor passes and fails exactly the
-same tests (`tests/host/test_suites.py::test_ccbor-ref_own_suite`).
+The driver checks every case: decode must give the expected value (tags as
+`Tag`, undefined as `Ellipsis`, floats by exact bits, NaN
+payload-insensitively); the `bad.cbor` inputs must all raise a ccbor
+exception; and where the vector expects a round trip, `dumps(value,
+canonical=True)` must give the vector's bytes.
 
-## 4. Conformance: msgpack-test-suite
+Every skip is counted and printed with its reason: encodeOptions the
+vectors carry that we would not choose (`avoidInts`, `dateTag`), NaN
+payloads (we pack the canonical `f97e00`), unassigned simple values (by
+design, D3), nesting beyond our 32-level limit, the two date cases that only
+fail for cbor2 because it converts them to `datetime`, one UTF-8 case where
+MicroPython's own checker accepts the overlong form, and one map that uses
+`0` and `False` as distinct keys (impossible in a MicroPython dict). The
+skip count is exact: 80 on the standard build, more on float32 (doubles
+that do not survive single precision skip re-encode; decode is still
+checked).
 
-[msgpack-test-suite](https://github.com/kawanet/msgpack-test-suite) is the
-set of cross-language test vectors of MessagePack: for each value, the list
-of its valid encodings. `tests/conformance/conformance.py` checks that every
-valid encoding unpacks to the value and that packing the value gives one of
-them: **318 of 318 checks pass**, with double and single precision floats, on
-the unix port, the ESP32 and the ESP32-P4.
+## 5. Interoperability with cbor2
 
-## 5. Interoperability with msgpack-python
+[cbor2](https://github.com/agronholm/cbor2) is the reference implementation
+for CPython. `tests/host/test_interop.py`:
 
-[msgpack-python](https://github.com/msgpack/msgpack-python) is the reference
-implementation for CPython. `tests/host/test_interop.py`:
+- packs thousands of random objects with cbor2, unpacks and re-packs them
+  with ccbor (canonical), and unpacks the result with cbor2: the objects
+  must survive both directions;
+- checks that for the same value ccbor and cbor2 choose the same canonical
+  bytes, byte for byte, at every size boundary (integers, strings, bytes,
+  containers, floats including half-exact values and NaN);
+- checks `Tag` <-> `CBORTag` and `Ellipsis` <-> `undefined`.
 
-- packs thousands of random objects with msgpack-python, unpacks and packs
-  them again with ccbor, and unpacks the result with msgpack-python: the
-  objects must survive both directions;
-- checks that, for the same value, ccbor and msgpack-python choose the
-  same encoding, byte for byte, at every size boundary.
+The tests run against the Debian-packaged cbor2 6.1.2 (the Rust
+implementation); nothing depends on `cbor2.__version__` (a stale dist-info
+may report 5.9.0).
 
 ## 6. Fuzzing under sanitizers
 
-`tests/fuzz/fuzz_ccbor.py` feeds random, mutated and truncated data to
-`loads`, `load` and an `Unpacker` fed in random chunks, checks that they
-agree, and round-trips random objects. It runs on a unix build with
-**AddressSanitizer and UndefinedBehaviorSanitizer** (`make test-sanitize`),
-where any out-of-bounds access, use after free, overflow or undefined
-behaviour aborts the run. The whole test suite and the differential test run
-on that build too.
+`tests/fuzz/fuzz_ccbor.py` runs on the sanitizer build, where any memory
+error aborts the process:
+
+1. Random, mutated and truncated byte strings go through `loads()`,
+   `load()` and an `Unpacker` fed in random chunks: only ccbor exceptions
+   (and `RuntimeError` for nesting) may come out, never a crash, and the
+   three entry points must agree. The mutation set inserts CBOR-relevant
+   bytes (bad additional info, indefinite lengths, BREAK, bignum tags,
+   one-byte simple values).
+2. Random objects round-trip: `loads(dumps(o))` equals `o`, up to what CBOR
+   cannot distinguish (tuple/list, bytearray/bytes) and the smallest-exact
+   float width (compared re-packed).
 
 ## 7. Coverage
 
-`make coverage` runs the test programs on the coverage build and reports the
-coverage of `modccbor.c` with gcov: **99.1% of the lines, all branches
-executed, 95.9% of them taken both ways**. The 9 lines never executed are
-error paths that cannot be reached on purpose: objects above 4 GiB (4 lines;
-no board holds one), a native subtype without a known layout (none exists in
-MicroPython), a stream that writes less without reporting an error, a native
-stream without `read`, and a second container-size check that the first
-one always triggers before.
+`make coverage` builds the coverage variant and reports line and branch
+coverage of the module; the suites above drive nearly every path. The
+8-byte length headers beyond 32 bits are the known gap (they need objects
+bigger than the heap).
 
 ## 8. Memory
 
-`ccbor_memory.py` checks that thousands of calls do not make the heap
-grow, and bounds the memory one call allocates: `dumps` allocates the result
-and little more, `loads` allocates the objects it returns. The benchmark
-measures the allocation of each call (see [BENCHMARKS.md](BENCHMARKS.md)).
+`ccbor_memory.py` (in the suite) checks that repeated packing and unpacking
+does not leak, and that the heap used by one call is bounded by the size of
+the data.
 
 ## 9. Real hardware
 
-The suite, the differential test, the conformance check and the fuzzer run on
-real boards with `make test-device`, using the test firmware described in
-[HARDWARE_TESTING.md](HARDWARE_TESTING.md).
+The suite, the differential test, the conformance check and the fuzzer run
+on real boards with `make test-device`, using the test firmware described
+in [HARDWARE_TESTING.md](HARDWARE_TESTING.md). The board results of this
+CBOR cycle are pending (no board in this cycle); the 1.0.0 MessagePack
+release ran everything on ESP32 and ESP32-P4.
 
 ## Build configurations
 
 | build | where | floats | ints | notes |
 |---|---|---|---|---|
-| unix `standard` | macOS, Linux (CI) | double | arbitrary precision | 64-bit |
-| unix `float32` | macOS, Linux (CI) | single | arbitrary precision | the float semantics of the boards |
-| unix `longlong` | Linux (CI) | double | 64-bit only | a 32-bit build |
+| unix `standard` | Linux | double | arbitrary precision | 64-bit |
+| unix `float32` | Linux | single | arbitrary precision | the float semantics of the boards |
+| unix `longlong` | Linux (CI) | double | 64-bit only | a 32-bit build; bignums wrap in `Tag` |
 | unix `minimal` | Linux (CI) | none | | build check of the smallest configuration |
-| unix `sanitize` | macOS, Linux (CI) | double | arbitrary precision | ASan + UBSan |
-| unix `coverage` | macOS, Linux (CI) | double | arbitrary precision | gcov |
-| ESP32 (Xtensa) | ESP32-PICO-V3-02 board | single | arbitrary precision | with and without PSRAM |
+| unix `sanitize` | Linux | double | arbitrary precision | ASan + UBSan |
+| unix `coverage` | Linux | double | arbitrary precision | gcov |
+| ESP32 (Xtensa) | ESP32-PICO-V3-02 board | single | arbitrary precision | 1.0.0 ran with and without PSRAM |
 | ESP32-P4 (RISC-V) | ESP32-P4 board | single | arbitrary precision | 32 MiB PSRAM |
 
-The CI also builds the firmware for ESP32, ESP32-S3, ESP32-C3, ESP32-C6 and
-ESP32-P4.
+The CI also builds the firmware for ESP32, ESP32-S3, C3, C6 and P4.
 
 ## Benchmarks
 
-`bench/bench.py` measures, for ccbor, ccbor-ref and the built-in `json`,
-on the same payloads: the time of `dumps` and `loads` (median of 5 runs,
-each long enough for the timer), the heap allocated by one call (with the GC
-disabled) and the size of the result. `tools/bench.py` runs it on unix builds
-and boards and writes [BENCHMARKS.md](BENCHMARKS.md).
-
-On the boards ccbor-ref is frozen into the firmware, which is the fastest and
-leanest way to run Python code: the comparison is fair to it. Timings on a
-computer vary with its load; on the boards they are stable to a few percent.
+`bench/bench.py` measures, for ccbor, refcbor (the pure-Python reference)
+and the built-in `json`, on the same payloads: the time of `dumps` and
+`loads` (median of 5 runs, each long enough for the timer), the heap
+allocated by one call (with the GC disabled) and the size of the result.
+`tools/bench.py` runs it on unix builds and boards and writes
+[BENCHMARKS.md](BENCHMARKS.md).
 
 ## Problems found along the way
 
-Testing found real problems in ccbor before its release, among them:
+Testing found real problems during the conversion, among them:
 
-- `namedtuple` objects were read as Python class instances
-  (`mp_obj_cast_to_native_base()` assumes one): found by the differential
-  test.
-- `load()` crashed on a Python file-like object: `mp_get_stream()` assumes the
-  object is a native stream. Native streams are now recognised by their
-  `read`/`write` methods.
-- On the ESP32, a nesting limit of 128 levels left too little C stack to raise
-  the exception at the deepest level: found only on the board. The limit is
-  now 32.
-- `hash()` of an `Unpacker` failed: found with the coverage build.
-- On a 32-bit build, gcc rejected a length check as "always false"
-  (`-Wtype-limits`, an error with `-Werror`); and a MicroPython configuration
-  without `bytearray` failed to link: both found by the Linux builds of the CI
-  (`tools/docker-ci.sh`), which macOS does not cover.
-- Looking up every unpacked string as an existing qstr made lists of strings
-  2.7 times slower to unpack on the ESP32-P4: only map keys are looked up now
-  (see `CCBOR_REUSE_QSTR` in [USAGE.md](USAGE.md#12-build-time-configuration)).
-
-It also found three issues of MicroPython itself, which only affect
-sanitizer builds and are worked around in `tools/build-unix.sh`; they are
-worth reporting upstream:
-
-- `py/gc.c` marks `gc_get_ptr()` with `no_sanitize_address` behind
-  `#if __GNUC__ > 4`, which is false for clang (it defines `__GNUC__` as 4):
-  with clang, ASan reports the GC's scan of the C stack as a
-  stack-buffer-overflow. Worked around with an ignore list
-  (`tools/sanitizer-ignorelist.txt`).
-- `mp_float_hash()` (`py/obj.h`) converts the float to an integer, undefined
-  behaviour for huge floats (any `{1e300: 0}`); worked around with
-  `MICROPY_FLOAT_HIGH_QUALITY_HASH=1`.
-- clang's `pointer-overflow` check fires on an idiom of `py/vm.c`
-  (`&sp[-n]`); gcc does not report it.
-
-On builds limited to 64-bit ints (`longlong`), `int()` of a number above
-2**64 does not raise `OverflowError`: `tests/mp/ccbor_int64.py` checks for
-big ints by converting the result back to a string.
-
-And one of the macOS toolchain: the AddressSanitizer runtime refuses to start
-("Interceptors are not working") when the binary keeps its symbol table; the
-sanitizer build is stripped and keeps a copy with symbols
-(`micropython.syms`) for reading reports.
+- **BREAK leaked into definite containers** nested inside indefinite ones:
+  `9f 91 ff ...` silently ended the 17-item definite array, because the
+  sentinel was accepted anywhere inside an indefinite context. Found by
+  the differential test; every definite container now rejects it.
+- **The BREAK sentinel collided with small int 0** (both are immediate
+  values on 64-bit builds): an indefinite container holding a 0 item
+  silently ended there — `9f 00 ff` decoded to `[]` instead of `[0]`. Found
+  by the conformance corpus; the sentinel is now a static object.
+- **`list_to_tuple()` read the sentinel's type field** (ASan
+  global-buffer-overflow) when a BREAK came back as a map key; the check now
+  happens before any inspection of the decoded item.
+- **The scanner mis-measured indefinite strings** (the chunk length of
+  `ai < 24` was read as 0) and **half/single floats** (the additional info
+  25/26/27 was read as a length). Found by hand while porting the
+  conformance corpus.
+- **`-2**64` overflowed the magnitude accumulation** in the packer (the
+  old msgpack code built a `uint64`); it now encodes as `3b ff..ff` like the
+  RFC's vector.
+- The 1.0.0 (MessagePack) release's own list is in the CHANGELOG.

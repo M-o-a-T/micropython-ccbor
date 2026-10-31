@@ -4,8 +4,9 @@
 #
 # The ALoader API follows Peter Hinch's umsgpack.ALoader
 # (https://github.com/peterhinch/micropython-msgpack), implemented here on
-# top of the C ccbor.Unpacker. It is normally reached as ccbor.ALoader:
-# the C module imports this file on first use.
+# top of the C ccbor.Unpacker: it decodes the CBOR objects arriving on an
+# asyncio StreamReader. It is normally reached as ccbor.ALoader: the C
+# module imports this file on first use.
 
 import ccbor
 

@@ -27,7 +27,7 @@ BENCH = ROOT / "bench" / "bench.py"
 
 def run_unix(flavour):
     exe = ROOT / "build" / f"unix-{flavour}" / "micropython"
-    env = dict(os.environ, MICROPYPATH=".frozen")  # refcbor path: phase 5
+    env = dict(os.environ, MICROPYPATH=f"{ROOT / 'tests' / 'diff'}:.frozen")
     return subprocess.run(
         [str(exe), "-X", "heapsize=64M", str(BENCH)],
         capture_output=True, text=True, env=env, check=True,
@@ -111,7 +111,8 @@ def cmd_report(args):
         "for how to run it and how to read the figures.",
         "",
         "- **ccbor**: this module (C).",
-        "- **ccbor-ref**: the pure-Python reference codec (added in phase 5).",
+        "- **ccbor-ref**: refcbor, the in-repo pure-Python reference codec",
+        "  (the CBOR successor of the umsgpack comparison of msgpackc 1.0).",
         "- **json**: MicroPython's built-in `json` module (C), for reference.",
         "- *time* is per call, in microseconds (median of 5 runs); *alloc* is the heap",
         "  allocated by one call, in bytes; *speed-up* is ccbor-ref time / ccbor time.",

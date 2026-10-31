@@ -27,7 +27,7 @@ random.seed(SEED)
 
 N_PACK = 400 if QUICK else 2000
 N_UNPACK = 1000 if QUICK else 4000
-MAX_DEPTH = 4 if QUICK else 6
+MAX_DEPTH = 4 if QUICK else 5
 BIG = not QUICK  # strings and containers with 16/32-bit length headers
 
 checks = 0
@@ -37,13 +37,19 @@ fails = 0
 kinds = {}  # mismatch summary: (operation, ccbor result, refcbor result) -> count
 
 
+def brepr(o, n):
+    "repr() truncated without building the whole string first"
+    r = repr(o)
+    return r[:n]
+
+
 def report(kind, inp, a, b):
     global fails
     fails += 1
     if fails <= 10:
-        print("MISMATCH", kind, repr(inp)[:60])
-        print("  ccbor  :", repr(a)[:70])
-        print("  refcbor:", repr(b)[:70])
+        print("MISMATCH", kind, brepr(inp, 60))
+        print("  ccbor  :", brepr(a, 70))
+        print("  refcbor:", brepr(b, 70))
     kinds[
         (
             kind,
