@@ -4,7 +4,7 @@ All notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [2.0.0] - 2026-10-31
+## [c1.0.0] - 2026-10-31
 
 The CBOR edition: the module now speaks CBOR (RFC 8949) instead of
 MessagePack, and is renamed `ccbor` (was `msgpackc`). The API keeps the
