@@ -25,13 +25,15 @@ if [[ ! -d "$IDF_DIR/.git" ]]; then
     ref=(--depth 1 --shallow-submodules)
     if [[ -n "${IDF_REFERENCE:-}" && -d "${IDF_REFERENCE}/.git" ]] \
         && [[ "$(git -C "$IDF_REFERENCE" rev-parse --is-shallow-repository)" == false ]]; then
-        ref=(--reference "$IDF_REFERENCE" --dissociate)
+        ref=(--reference "$IDF_REFERENCE")
+        KEEP_REF=y  # keep it
     fi
     git clone -q -b "$IDF_VERSION" "${ref[@]}" https://github.com/espressif/esp-idf.git "$IDF_DIR"
+    [ -v KEEP_REF ] || ref=()
 else
     echo ">> tools/esp-idf already present: $(git -C "$IDF_DIR" describe --tags)"
 fi
-git -C "$IDF_DIR" submodule update --init --recursive --depth 1 --jobs 8 -q
+git -C "$IDF_DIR" submodule update --init --recursive --depth 1 -q "${ref[@]}"
 
 if [[ -n "${IDF_DIST_CACHE:-}" && -d "${IDF_DIST_CACHE}" ]]; then
     echo ">> Seeding the download cache from $IDF_DIST_CACHE"
