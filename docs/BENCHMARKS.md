@@ -12,21 +12,21 @@ for how to run it and how to read the figures.
 - *time* is per call, in microseconds (median of 5 runs); *alloc* is the heap
   allocated by one call, in bytes; *speed-up* is ccbor-ref time / ccbor time.
 
-## unix port, Apple Silicon
+## Unix
 
-linux — MicroPython `linux`, floats: double, host: Linux x86_64, 2026-10-31.
+linux — MicroPython `linux`, floats: double, host: Linux x86_64, 2026-11-01.
 
 | payload | size | ccbor dumps | ccbor-ref dumps | speed-up | json dumps | ccbor loads | ccbor-ref loads | speed-up | json loads |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
-| int | 2 B | 0.1 | 0.6 | **6.6x** | 0.3 | 0.0 | 0.9 | **22.0x** | 0.1 |
-| telemetry | 54 B | 0.2 | 10.5 | **44.8x** | 1.3 | 0.8 | 12.5 | **15.6x** | 8.3 |
-| telemetry x20 | 1081 B | 4.0 | 214 | **53.5x** | 22.3 | 15.4 | 253 | **16.4x** | 50.1 |
-| config | 337 B | 1.5 | 68.5 | **45.9x** | 6.8 | 4.2 | 83.2 | **19.6x** | 33.5 |
-| int list x100 | 314 B | 0.8 | 58.3 | **74.8x** | 4.8 | 0.7 | 85.6 | **124.6x** | 19.9 |
-| float list x100 | 878 B | 1.8 | 126 | **68.4x** | 16.8 | 2.0 | 96.0 | **48.7x** | 43.9 |
-| str list x50 | 392 B | 0.8 | 40.0 | **50.5x** | 6.6 | 1.9 | 52.0 | **27.6x** | 41.2 |
-| map x100 | 678 B | 2.1 | 115 | **54.3x** | 12.4 | 33.6 | 227 | **6.8x** | 108 |
-| bytes 1 KiB | 1027 B | 1.0 | 28.1 | **27.8x** | - | 1.0 | 2.0 | **2.1x** | - |
+| int | 2 B | 0.1 | 0.5 | **6.6x** | 0.3 | 0.0 | 0.8 | **21.0x** | 0.1 |
+| telemetry | 54 B | 0.2 | 10.5 | **46.0x** | 1.3 | 0.8 | 13.0 | **16.6x** | 8.3 |
+| telemetry x20 | 1081 B | 4.0 | 214 | **54.0x** | 22.3 | 15.4 | 253 | **16.4x** | 49.3 |
+| config | 337 B | 1.5 | 71.9 | **49.0x** | 6.8 | 4.0 | 84.0 | **20.7x** | 33.6 |
+| int list x100 | 314 B | 0.8 | 57.6 | **71.7x** | 4.8 | 0.7 | 83.2 | **123.6x** | 19.4 |
+| float list x100 | 878 B | 1.9 | 127 | **68.5x** | 16.6 | 2.0 | 94.0 | **47.6x** | 42.6 |
+| str list x50 | 392 B | 0.8 | 40.2 | **49.8x** | 6.6 | 1.9 | 51.5 | **27.3x** | 40.5 |
+| map x100 | 678 B | 2.1 | 112 | **52.6x** | 12.2 | 34.7 | 231 | **6.6x** | 107 |
+| bytes 1 KiB | 1027 B | 1.0 | 27.8 | **26.9x** | - | 1.0 | 2.0 | **2.1x** | - |
 
 Heap allocated per call (bytes) and encoded size:
 

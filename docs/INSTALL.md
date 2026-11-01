@@ -90,13 +90,13 @@ You get the MicroPython prompt `>>>`. Type:
 >>> import ccbor
 >>> data = ccbor.dumps({"temp": 21.5, "ok": True, "tags": ["a", "b"]})
 >>> data
-b'\x83\xa4tags\x92\xa1a\xa1b\xa2ok\xc3\xa4temp\xcb@5\x80\x00\x00\x00\x00\x00'
+b'\xa3dtags\x82aaabbok\xf5dtemp\xf9M`'
 >>> ccbor.loads(data)
 {'tags': ['a', 'b'], 'ok': True, 'temp': 21.5}
 ```
 
-Leave with `Ctrl-D`. The order of the keys printed may differ: MicroPython
-dicts are unordered.
+Leave with `Ctrl-D`. Your string, and the order of the keys printed,
+may differ: MicroPython dicts are unordered.
 
 To run the whole test suite on your computer: `make test` (about 15
 minutes; `make test-quick` takes 2). See [TESTING.md](TESTING.md).
@@ -113,9 +113,17 @@ nothing goes to your home directory, and it never ends up in git.
 make esp-idf
 ```
 
-It downloads about 1.5 GB and takes 10 to 30 minutes. By default it installs
-the compilers for esp32, esp32s3, esp32c3, esp32c6 and esp32p4. To install
-only what you need (much smaller), choose the chips:
+It downloads about 1.5 GB. If you already have a (complete, non-shallow)
+clone of ESP-IDF on your system, you can skip the download: use
+
+```bash
+IDF_REFERENCE=/your/src/esp-idf/ tools/setup-esp-idf.sh
+```
+instead.
+
+By default, ESP-IDF installs the compilers for esp32, esp32s3, esp32c3,
+esp32c6 and esp32p4. To install only what you need (much smaller), choose
+the chips:
 
 ```bash
 IDF_CHIPS=esp32 tools/setup-esp-idf.sh
@@ -146,13 +154,12 @@ MicroPython has a generic firmware for each chip. Pick the `BOARD` (and
 | ESP32-P4, chip revision 3 or later | `ESP32_GENERIC_P4` | |
 | ESP32-P4, chip revision 0.x or 1.x | `ESP32_GENERIC_P4` | `PRE_REV3` |
 
-Not sure? Connect the board and ask it (see 5.4 for the port name):
+Not sure? Connect the board and ask it (see section 5.4 for the port name):
 
 ```bash
 source tools/esp-env.sh
 esptool.py --port /dev/ttyUSB0 flash_id
 ```
-
 It prints the chip, its revision, whether it has PSRAM ("Embedded PSRAM")
 and the flash size. Other boards are in `micropython/ports/esp32/boards/`.
 
@@ -251,12 +258,12 @@ module is in a firmware, run `help("modules")` at its prompt and look for
 `ccbor`.
 
 The module needs nothing from the board and has no configuration to set. It
-adds about 12 KiB of flash (15 KiB on RISC-V chips such as the ESP32-C3, C6 and P4) and reserves no RAM.
+adds about 11 KiB (ARM) to 15 KiB (ESP32) of flash, and reserves no RAM.
 
 ## 7. The Python helpers
 
-Two optional Python files complete the C module. The firmware built by this
-repo (`make firmware`) already contains the first one.
+One optional Python file completes the C module. The firmware built by this
+repo (`make firmware`) already contains it.
 
 | file | gives you | needed for |
 |---|---|---|

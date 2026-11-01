@@ -15,10 +15,9 @@ wire format, the extension mechanism and several options are CBOR's.
 - Wire format: CBOR (RFC 8949) — major types 0-7, preferred (minimal)
   encodings, 64-bit length headers.
 - `ext_serializable` is now `tag_serializable(tag_number, example=None)`:
-  CBOR tags (0..2**64-1) instead of msgpack ext types (-128..127), and the
-  content is a CBOR item (packb returns an encodable object; unpackb
-  receives the decoded one), not raw bytes. Tags 2/3 (bignums) are native
-  and cannot be registered.
+  CBOR tags (0..2**64-1) instead of msgpack ext types (-128..127); the
+  content is a CBOR item. Tags 2/3 (bignums) are native and cannot be
+  registered.
 - `ReservedCodeException` is now `InvalidCodeException` (invalid additional
   information, stray BREAK, bad indefinite-string chunks, reserved 1-byte
   simple values).
@@ -27,10 +26,10 @@ wire format, the extension mechanism and several options are CBOR's.
 - Repository moved to M-o-a-T/micropython-ccbor.
 
 **Added**
-- `Tag` wrapper type (compatible with moat's `Tag`, cbor2's `CBORTag` in
-  spirit): unregistered tags decode to it, and instances pack generically.
+- `Tag` wrapper type: unregistered tags decode to it, and instances pack
+  generically.
 - Bignum tags 2/3 both ways: `int` beyond 64 bits packs as a bignum and
-  decodes back (wrapped in `Tag(2/3, bytes)` on 64-bit-int builds).
+  decodes back, wrapped in `Tag(2/3, bytes)` on 64-bit-int builds.
 - Half floats: the packer uses the smallest exact width (f9/fa/fb, like
   cbor2 canonical), `force_float_precision="half"` forces it; NaN packs as
   f97e00 whatever its payload; decoding expands half floats.

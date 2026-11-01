@@ -35,7 +35,7 @@ Time to pack and unpack a list of 20 telemetry records (1 KiB), and heap allocat
 
 | | ccbor dumps | ccbor-ref dumps | | ccbor loads | ccbor-ref loads | |
 |---|--:|--:|--:|--:|--:|--:|
-| unix port, Apple Silicon | **4.0 µs**, 3680 B | 214 µs, 50848 B | **53.5x** faster | **15.4 µs**, 5312 B | 253 µs, 56896 B | **16.4x** faster |
+| unix-standard, amd64 | **4.0 µs**, 3680 B | 214 µs, 50848 B | **54.0x** faster | **15.4 µs**, 5312 B | 253 µs, 56896 B | **16.4x** faster |
 
 <!-- /BENCH-SUMMARY -->
 
@@ -45,9 +45,9 @@ Time to pack and unpack a list of 20 telemetry records (1 KiB), and heap allocat
   (`force_float_precision`, `use_tuple`, `use_ordered_dict`,
   `allow_invalid_utf8`) plus `canonical=` for cbor2-compatible key order.
 - **CBOR tags** with the `@tag_serializable` decorator, for your classes and
-  for built-in types such as `set` or `complex`: the content is a CBOR item,
-  not raw bytes. Unregistered tags decode to a `Tag` wrapper (compatible
-  with moat's `Tag` and cbor2's `CBORTag`).
+  for built-in types such as `set` or `complex`: the content is a CBOR item.
+  Unregistered tags decode to a `Tag` wrapper (compatible with cbor2's
+  `CBORTag`).
 - **Full CBOR on the way in**: non-minimal encodings, indefinite-length
   strings, arrays and maps; bignum tags 2/3 to `int`; half floats expanded;
   `undefined` as `Ellipsis`.
@@ -90,7 +90,7 @@ make firmware BOARD=ESP32_GENERIC
 make deploy BOARD=ESP32_GENERIC PORT=/dev/ttyUSB0   # erases the board!
 ```
 
-**Already build your own firmware?** Add the module to it:
+**Build your own firmware?** Add the module to it:
 
 ```bash
 make USER_C_MODULES=/path/to/micropython-ccbor/cmodules/micropython.cmake   # esp32, rp2
