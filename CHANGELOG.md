@@ -4,6 +4,17 @@ All notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+**Added**
+- `memoryview` packs as a byte string, like `bytes` and `bytearray`.
+- The `memory_min` load option: `loads(data, memory_min=N)` unpacks byte
+  strings of at least N bytes as `memoryview`s into `data` instead of
+  copies — zero-copy decoding of large payloads. `load()` and `Unpacker`
+  reject the option (a stream has no buffer to refer to, and `feed()`
+  moves the Unpacker's buffer); decode `next_raw()`'s bytes with `loads()`
+  for the same effect there.
+
 ## [c1.0.0] - 2026-10-31
 
 The CBOR edition: the module now speaks CBOR (RFC 8949) instead of

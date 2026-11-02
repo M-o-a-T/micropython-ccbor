@@ -4,7 +4,7 @@
 #
 # Same API surface as ccbor: dumps/dump/loads/load, Tag, the options
 # (canonical, force_float_precision, use_tuple, use_ordered_dict,
-# allow_invalid_utf8), the same exception names and messages.
+# allow_invalid_utf8, memory_min), the same exception names and messages.
 #
 # Runs under MicroPython and CPython.
 
@@ -389,7 +389,18 @@ def _unpack(r, opts, depth, key=False):
                 chunks.append(r.take(_arg(r, cai)))
             data = b"".join(chunks)
         else:
-            data = r.take(_arg(r, ai))
+            n = _arg(r, ai)
+            # memory_min: a byte string long enough is a view into the input
+            # (never a map key), as in the C module. The bounds check is the
+            # reader's: a slice would silently come back short.
+            mm = opts.get("memory_min", 0)
+            if mt == _MT_BYTES and not key and mm and n >= mm:
+                if len(r.d) - r.i < n:
+                    raise InsufficientDataException()
+                data = memoryview(r.d)[r.i : r.i + n]
+                r.i += n
+            else:
+                data = r.take(n)
         if mt == _MT_TEXT:
             try:
                 s = data.decode("utf-8")
@@ -402,18 +413,19 @@ def _unpack(r, opts, depth, key=False):
             return s
         return data
     if mt == _MT_ARRAY:
+        # a key's whole subtree must stay hashable: propagate the flag
         if ai == _AI_INDEF:
             out = []
             while True:
                 if r.d[r.i : r.i + 1] == b"\xff":
                     r.i += 1
                     break
-                out.append(_unpack(r, opts, depth + 1))
+                out.append(_unpack(r, opts, depth + 1, key))
             return tuple(out) if opts.get("use_tuple") else out
         n = _arg(r, ai)
         out = []
         for _ in _loop(n):  # no range(): n may exceed the machine word
-            out.append(_unpack(r, opts, depth + 1))
+            out.append(_unpack(r, opts, depth + 1, key))
         return tuple(out) if opts.get("use_tuple") else out
     if mt == _MT_MAP:
         if ai == _AI_INDEF:
@@ -454,7 +466,7 @@ def _unpack(r, opts, depth, key=False):
                 raise InvalidCodeException("invalid code 0x%02x" % cic)
             mag = _from_bignum_bytes(r.take(_arg(r, cai)))
             return mag if n == 2 else -1 - mag
-        content = _unpack(r, opts, depth + 1)
+        content = _unpack(r, opts, depth + 1, key)
         if n == 55799:
             return content  # self-describe: stripped
         return Tag(n, content)
@@ -501,9 +513,15 @@ def _odict():
 
 
 def loads(data, **opts):
+    if "memory_min" in opts:
+        n = opts["memory_min"]
+        if not isinstance(n, int) or n < 0:
+            raise ValueError("memory_min must not be negative")
     r = _Reader(data)
     return _unpack(r, opts, 0)
 
 
 def load(fp, **opts):
+    if "memory_min" in opts:
+        raise ValueError("memory_min is only supported by loads()")
     return loads(fp.read(), **opts)

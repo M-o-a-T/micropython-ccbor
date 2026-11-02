@@ -46,7 +46,7 @@ extension mechanism (tags).
 | `int` | major types 0/1 | from `-2**64` to `2**64 - 1` in the shortest form; beyond that, bignum tags 2/3 (arbitrary precision, up to 128 bits) |
 | `float` | half/single/double | the **smallest exact** width, see [options](#4-options) |
 | `str` | text string (3) | UTF-8, validated on unpack |
-| `bytes`, `bytearray` | byte string (2) | both unpack as `bytes` |
+| `bytes`, `bytearray`, `memoryview` | byte string (2) | all unpack as `bytes` (or as views, see `memory_min`) |
 | `list`, `tuple` | array (4) | both unpack as `list` (or `tuple`, see `use_tuple`) |
 | `dict`, `OrderedDict` | map (5) | unpack as `dict` (or `OrderedDict`, see `use_ordered_dict`) |
 | `ccbor.Tag(n, v)` | tag (6) | the [tag wrapper](#6-tags-your-own-and-built-in-types) |
@@ -132,6 +132,19 @@ construction, `ALoader` passes them through to the unpacker.
 | `use_tuple` | `True` | arrays unpack as `tuple` instead of `list` |
 | `use_ordered_dict` | `True` | maps unpack as `OrderedDict` |
 | `allow_invalid_utf8` | `True` | invalid UTF-8 in a text string unpacks as `bytes` instead of raising `InvalidStringException` |
+| `memory_min` | bytes | `loads` only: byte strings at least this long unpack as a `memoryview` into the input instead of a copy |
+
+`memory_min` is `loads`'s zero-copy path: `load` (a stream has no buffer
+that outlives the call) and `Unpacker` (its `feed()` compacts and grows the
+buffer, which would silently invalidate every view) reject it with a
+`ValueError` — decode `next_raw()`'s bytes with `loads(..., memory_min=)`
+instead. The views are read-only over a `bytes` input and writable over a
+`bytearray` one, exactly like `memoryview(input)`; they keep the input
+alive (their GC anchor is the input's buffer), and the usual `memoryview`
+rule applies: resizing the input under them is not supported. Text strings
+never unpack as views (they are `str`), and neither do map keys or the
+chunks of an indefinite-length byte string (both must stay hashable or
+assembled).
 
 `Unpacker` also takes:
 

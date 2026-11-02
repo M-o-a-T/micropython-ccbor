@@ -121,7 +121,10 @@ def robj(depth=0):
                 k = "K"  # stable replacement: str() embeds addresses
             d[k] = robj(depth + 1)
         return d
-    return bytearray(rbytes(random.getrandbits(4)))
+    b = rbytes(random.getrandbits(4))
+    if random.getrandbits(1):
+        return memoryview(b)
+    return bytearray(b)
 
 
 def norm(o):
@@ -130,7 +133,7 @@ def norm(o):
         return [norm(x) for x in o]
     if isinstance(o, dict):
         return {norm_key(k): norm(v) for k, v in o.items()}
-    if isinstance(o, bytearray):
+    if isinstance(o, (bytearray, memoryview)):
         return bytes(o)
     if isinstance(o, float):
         # floats compare by what dumps() re-emits (smallest exact width)
@@ -245,6 +248,14 @@ for it in range(ITER):
     counts[key] = counts.get(key, 0) + 1
     if a[0] != b[0] or (a[0] == "exc" and a[1] != b[1]):
         fail("loads/load disagree", data, a, b)
+
+    # memory_min: the same object, with long byte strings as views; the
+    # re-packed bytes must not change (a view packs like its content).
+    c = outcome(m.loads, data, memory_min=random.choice((1, 2, 9, 64)))
+    if c[0] != a[0] or (a[0] == "exc" and c[1] != a[1]):
+        fail("memory_min disagrees", data, a, c)
+    elif a[0] == "ok" and m.dumps(c[1]) != m.dumps(a[1]):
+        fail("memory_min repack", data, a[1], c[1])
     if random.getrandbits(3) == 0:
         # A whole object at the start of the stream must come out of the
         # Unpacker exactly as loads() decodes it.

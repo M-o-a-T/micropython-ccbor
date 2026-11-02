@@ -51,8 +51,10 @@
 #include <string.h>
 
 #include "py/runtime.h"
+#include "py/binary.h"
 #include "py/builtin.h"
 #include "py/mpz.h"
+#include "py/objarray.h"
 #include "py/objexcept.h"
 #include "py/objint.h"
 #include "py/objlist.h"
@@ -1038,6 +1040,9 @@ static void pk_obj(packer_t *p, mp_obj_t o) {
                    #if MICROPY_PY_BUILTINS_BYTEARRAY
                    || type == &mp_type_bytearray
                    #endif
+                   #if MICROPY_PY_BUILTINS_MEMORYVIEW
+                   || type == &mp_type_memoryview
+                   #endif
                    ) {
             pk_bin(p, o);
         } else {
@@ -1131,6 +1136,9 @@ typedef struct _unpacker_t {
     // ext unpackb() could resize it, so the pointers are re-validated after.
     mp_obj_t src;
     const byte *base;
+    // The object the buffer belongs to (loads: the input). Only set when it
+    // is decoded from: the memory_min option returns views into it.
+    mp_obj_t view_src;
     // Stream mode (load): stream != MP_OBJ_NULL.
     mp_obj_t stream;
     const mp_stream_p_t *sp; // NULL: use the read method instead
@@ -1144,6 +1152,7 @@ typedef struct _unpacker_t {
     bool allow_invalid_utf8;
     bool key; // the object being decoded is a map key
     uint16_t indef; // open indefinite containers (BREAK is valid if > 0)
+    size_t memory_min; // byte strings at least this long decode as views
     byte hdr[8];
 } unpacker_t;
 
@@ -1246,7 +1255,59 @@ static mp_obj_t up_new_bytes(unpacker_t *u, const byte *b, size_t n, vstr_t *vst
     return mp_obj_new_bytes_from_vstr(vstr);
 }
 
-static mp_obj_t up_bin(unpacker_t *u, size_t n) {
+#if MICROPY_PY_BUILTINS_MEMORYVIEW
+// A byte string of n bytes at b, as a memoryview into the caller's buffer
+// instead of a copy (the memory_min option, buffer mode only). The layout is
+// the memoryview constructor's: items points at the start of the backing
+// data and memview_offset carries the payload offset, in bytes, so the GC
+// finds the backing block through items (an interior pointer would not be
+// traced). A memoryview input contributes its own items and offset, so a
+// view of a view keeps the original buffer reachable.
+static mp_obj_t up_new_view(unpacker_t *u, const byte *b, size_t n) {
+    mp_obj_array_t *mv = mp_obj_malloc(mp_obj_array_t, &mp_type_memoryview);
+    byte typecode = 'B';
+    mp_obj_t items;
+    size_t off;
+    if (mp_obj_get_type(u->view_src) == &mp_type_memoryview) {
+        // A view of a view: keep the original buffer reachable (its items is
+        // what the GC traces) and accumulate the offsets, in bytes. The
+        // offset lives in the 'free' bitfield (cf. objarray.h).
+        mp_obj_array_t *src = MP_OBJ_TO_PTR(u->view_src);
+        size_t item_sz = mp_binary_get_size('@', src->typecode & 0x7f, NULL);
+        off = src->free * item_sz + (size_t)(b - u->base);
+        items = src->items;
+        if (src->typecode & MP_OBJ_ARRAY_TYPECODE_FLAG_RW) {
+            typecode |= MP_OBJ_ARRAY_TYPECODE_FLAG_RW;
+        }
+    } else {
+        mp_buffer_info_t bi;
+        mp_get_buffer_raise(u->view_src, &bi, MP_BUFFER_READ);
+        off = (size_t)(b - u->base);
+        items = bi.buf;
+        if (mp_get_buffer(u->view_src, &bi, MP_BUFFER_RW)) {
+            typecode |= MP_OBJ_ARRAY_TYPECODE_FLAG_RW;
+        }
+    }
+    if (off > ((1LL << MP_OBJ_ARRAY_FREE_SIZE_BITS) - 1)) {
+        mp_raise_msg(&mp_type_OverflowError, MP_ERROR_TEXT("memoryview offset too large"));
+    }
+    mp_obj_memoryview_init(mv, typecode, off, n, items);
+    return MP_OBJ_FROM_PTR(mv);
+}
+#endif
+
+static mp_obj_t up_bin(unpacker_t *u, size_t n, bool key) {
+    #if MICROPY_PY_BUILTINS_MEMORYVIEW
+    // A view is unhashable, so map keys always copy. Only loads() has a
+    // caller-owned buffer (view_src) to refer to; up_payload does not touch
+    // the vstr in buffer mode, so NULL is fine here.
+    if (u->memory_min != 0 && !key && u->view_src != MP_OBJ_NULL && n >= u->memory_min) {
+        const byte *b = up_payload(u, n, NULL);
+        return up_new_view(u, b, n);
+    }
+    #else
+    (void)key;
+    #endif
     vstr_t vstr;
     const byte *b = up_payload(u, n, &vstr);
     return up_new_bytes(u, b, n, &vstr);
@@ -1591,6 +1652,7 @@ static mp_obj_t up_map(unpacker_t *u, size_t n) {
     for (size_t i = 0; indef || i < n; i++) {
         u->key = true;
         mp_obj_t k = up_obj(u);
+        u->key = false; // the value (and anything after) is no key material
         if (k == CCBOR_BREAK_SENTINEL) {
             if (indef) {
                 break; // the BREAK byte, not an object
@@ -1720,8 +1782,10 @@ static mp_obj_t up_str_indef(unpacker_t *u, bool text, bool key) {
 }
 
 static mp_obj_t up_obj(unpacker_t *u) {
-    bool key = u->key; // only for this object, not for what it contains
-    u->key = false;
+    // u->key stays as it is: a map key's whole subtree must decode
+    // hashable (byte strings copy, not views), and up_map clears the
+    // flag before the value. The local copies it for this object only.
+    bool key = u->key;
     byte ic = up_read(u, 1)[0];
     byte mt = ic & 0xe0;
     byte ai = ic & 0x1f;
@@ -1791,7 +1855,7 @@ static mp_obj_t up_obj(unpacker_t *u) {
             if (ai == 31) {
                 return up_str_indef(u, false, false);
             }
-            return up_bin(u, (size_t)UP_ARG());
+            return up_bin(u, (size_t)UP_ARG(), key);
         case 0x60: // text string
             if (ai == 31) {
                 return up_str_indef(u, true, key);
@@ -1905,6 +1969,7 @@ static mp_obj_t up_obj(unpacker_t *u) {
 
 static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
     u->src = MP_OBJ_NULL;
+    u->view_src = MP_OBJ_NULL;
     u->stream = MP_OBJ_NULL;
     u->sp = NULL;
     u->kw = kw;
@@ -1915,6 +1980,19 @@ static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
     u->use_tuple = kw_flag(kw, MP_QSTR_use_tuple);
     u->use_ordered_dict = kw_flag(kw, MP_QSTR_use_ordered_dict);
     u->allow_invalid_utf8 = kw_flag(kw, MP_QSTR_allow_invalid_utf8);
+    u->memory_min = 0;
+    mp_obj_t mm = kw_get(kw, MP_QSTR_memory_min);
+    if (mm != MP_OBJ_NULL) {
+        #if MICROPY_PY_BUILTINS_MEMORYVIEW
+        mp_int_t n = mp_obj_get_int(mm);
+        if (n < 0) {
+            mp_raise_ValueError(MP_ERROR_TEXT("memory_min must not be negative"));
+        }
+        u->memory_min = n;
+        #else
+        raise_unsupported_msg(MP_ERROR_TEXT("memoryview not supported"));
+        #endif
+    }
     u->tags = ext_map(MP_QSTR_tags);
 }
 
@@ -1924,6 +2002,8 @@ static void unpacker_set_buffer(unpacker_t *u, mp_obj_t src, const byte *buf, si
     u->end = buf + len;
     // bytes are immutable: no need to re-validate the buffer after callbacks.
     u->src = mp_obj_is_type(src, &mp_type_bytes) ? MP_OBJ_NULL : src;
+    // The buffer belongs to the caller, so memory_min views can refer to it.
+    u->view_src = src;
 }
 
 // loads(data, **options): data is bytes, bytearray or any other read buffer
@@ -1944,6 +2024,10 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(ccbor_loads_obj, 1, ccbor_loads);
 // load(fp, **options): reads exactly the bytes of one object from fp.
 static mp_obj_t ccbor_load(size_t n_args, const mp_obj_t *args, mp_map_t *kw) {
     mp_arg_check_num(n_args, kw->used, 1, 1, true);
+    // A stream has no buffer that outlives the call, so nothing to view.
+    if (kw_get(kw, MP_QSTR_memory_min) != MP_OBJ_NULL) {
+        mp_raise_ValueError(MP_ERROR_TEXT("memory_min is only supported by loads()"));
+    }
     unpacker_t u;
     unpacker_init(&u, kw);
     u.stream = args[0];
@@ -2145,6 +2229,11 @@ static mp_obj_t unpacker_make_new(const mp_obj_type_t *type, size_t n_args, size
         if (mp_obj_equal(key, MP_OBJ_NEW_QSTR(MP_QSTR_max_buffer_size))) {
             self->max_buffer_size = mp_obj_get_int(value);
         } else {
+            if (mp_obj_equal(key, MP_OBJ_NEW_QSTR(MP_QSTR_memory_min))) {
+                // feed() compacts and grows the buffer, which would silently
+                // invalidate every view. Use next_raw() and loads() instead.
+                mp_raise_ValueError(MP_ERROR_TEXT("memory_min is only supported by loads()"));
+            }
             mp_obj_dict_store(self->kw_dict, key, value);
         }
     }

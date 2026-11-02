@@ -67,7 +67,12 @@ def outcome(f, *args, **kw):
 
 
 def same_exc(a, b):
-    # the same exception NAME and message (each module has its own classes)
+    # the same exception NAME and message (each module has its own classes).
+    # UnhashableKeyException embeds the key's repr: a dict key prints in its
+    # table's order, which the modules lay out differently (they preallocate
+    # differently), so only the name is comparable there.
+    if type(a).__name__ == type(b).__name__ == "UnhashableKeyException":
+        return True
     return type(a).__name__ == type(b).__name__ and str(a) == str(b)
 
 
@@ -77,7 +82,7 @@ def canon(o):
         return [canon(x) for x in o]
     if isinstance(o, dict):
         return {canon(k): canon(v) for k, v in o.items()}
-    if isinstance(o, (bytes, bytearray)):
+    if isinstance(o, (bytes, bytearray, memoryview)):
         return bytes(o)
     if o is ccbor.Tag and False:
         pass
@@ -349,8 +354,54 @@ def run_unpack_phase():
             check_unpack(data[: len(data) // 2], opts)  # truncated
 
 
+# phase 3: memory_min. The decoded objects are memoryviews where the option
+# applies (byte strings at least memory_min long, never keys); canon()
+# compares their content, and the type is checked separately: both modules
+# must agree on exactly which byte strings became views.
+def run_memory_phase():
+    for _ in range(N_UNPACK // 2):
+        data = ccbor.dumps(adapt(robj(), ccbor))
+        if random.getrandbits(2) == 0:
+            data = mutate(mutate(data))
+        mm = random.choice((0, 1, 2, 8, 100))
+        a = outcome(ccbor.loads, data, memory_min=mm)
+        b = outcome(refcbor.loads, data, memory_min=mm)
+        global checks
+        checks += 1
+        if a[0] != b[0]:
+            report("memory", data, a[1], b[1])
+            continue
+        if a[0] == "exc":
+            if not same_exc(a[1], b[1]):
+                report("memory-exc", data, a[1], b[1])
+            continue
+        if not same(a[1], b[1]):
+            report("memory-obj", data, a[1], b[1])
+            continue
+
+        # same content: now the view positions must agree too. Maps become
+        # sorted lists of pairs: a dict's iteration order depends on its
+        # table layout (the modules preallocate differently), and type
+        # names collide as keys, so neither order nor a dict-of-views
+        # comparison would be stable.
+        def views(o):
+            if isinstance(o, (list, tuple)):
+                return [views(x) for x in o]
+            if isinstance(o, dict):
+                return sorted((repr(views(k)), repr(views(v))) for k, v in o.items())
+            if isinstance(o, (ccbor.Tag, refcbor.Tag)):
+                return ("Tag", views(o.value))
+            return type(o).__name__
+
+        va = views(a[1])
+        vb = views(b[1])
+        if va != vb:
+            report("memory-type", data, va, vb)
+
+
 run_pack_phase()
 run_unpack_phase()
+run_memory_phase()
 
 print("checks:", checks)
 if fails:

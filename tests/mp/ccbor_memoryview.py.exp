@@ -1,0 +1,16 @@
+True
+True
+True
+bytes memoryview
+b'abcdefghij'
+bytes
+memoryview memoryview b'ab'
+str abcdefghij
+bytes
+bytes
+True
+memoryview b'0123456789'
+True
+ValueError: memory_min is only supported by loads()
+ValueError: memory_min is only supported by loads()
+ValueError: memory_min must not be negative
