@@ -1983,14 +1983,15 @@ static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
     u->memory_min = 0;
     mp_obj_t mm = kw_get(kw, MP_QSTR_memory_min);
     if (mm != MP_OBJ_NULL) {
-        #if MICROPY_PY_BUILTINS_MEMORYVIEW
         mp_int_t n = mp_obj_get_int(mm);
         if (n < 0) {
             mp_raise_ValueError(MP_ERROR_TEXT("memory_min must not be negative"));
         }
+        #if MICROPY_PY_BUILTINS_MEMORYVIEW
         u->memory_min = n;
         #else
-        raise_unsupported_msg(MP_ERROR_TEXT("memoryview not supported"));
+        // No memoryview on this build: decode copies, whatever the option
+        // says. Code that passes memory_min must run on both kinds.
         #endif
     }
     u->tags = ext_map(MP_QSTR_tags);

@@ -14,3 +14,8 @@ True
 ValueError: memory_min is only supported by loads()
 ValueError: memory_min is only supported by loads()
 ValueError: memory_min must not be negative
+feed mv: True
+feed mv sliced: True
+feed mv bytearray: True
+feed mv alternating: True
+feed mv copied: True

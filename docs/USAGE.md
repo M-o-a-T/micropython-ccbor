@@ -144,7 +144,9 @@ alive (their GC anchor is the input's buffer), and the usual `memoryview`
 rule applies: resizing the input under them is not supported. Text strings
 never unpack as views (they are `str`), and neither do map keys or the
 chunks of an indefinite-length byte string (both must stay hashable or
-assembled).
+assembled). On a build without `memoryview` the option is silently
+ignored (everything copies); code that passes it runs on both kinds of
+build unchanged.
 
 `Unpacker` also takes:
 
@@ -290,7 +292,9 @@ for obj in u:                # every complete object, as it arrives
 ```
 
 - `feed(data)` appends bytes; `len(u)` is the bytes buffered but not
-  consumed; `bool(u)` tells whether any are left.
+  consumed; `bool(u)` tells whether any are left. `data` may be any read
+  buffer — `bytes`, `bytearray`, `memoryview`, sliced or not — and it is
+  copied, so the source may change or go away afterwards.
 - Iteration raises the same exceptions as `loads` on corrupt data; the
   offending bytes are consumed, so decoding continues with the next object.
   A not-well-formed byte is skipped: the stream can resynchronise.

@@ -64,3 +64,41 @@ for bad in (
         print("accepted")
     except ValueError as e:
         print("ValueError:", e)
+
+# feed() takes any read buffer: memoryviews (also sliced, also over a
+# bytearray) work, and the bytes are copied (the source may change or go
+# away afterwards)
+stream = m.dumps([b"ab", b"abcdefghij", None]) + m.dumps({"k": 1})
+u = m.Unpacker()
+u.feed(memoryview(stream))
+print("feed mv:", list(u) == [[b"ab", b"abcdefghij", None], {"k": 1}])
+
+u = m.Unpacker()
+u.feed(memoryview(stream)[len(m.dumps([b"ab", b"abcdefghij", None])) :])
+print("feed mv sliced:", list(u) == [{"k": 1}])
+
+u = m.Unpacker()
+u.feed(memoryview(bytearray(stream)))
+print("feed mv bytearray:", list(u) == [[b"ab", b"abcdefghij", None], {"k": 1}])
+
+u = m.Unpacker()
+out = []
+i = 0
+n = 0
+while i < len(stream):
+    n += 1
+    if n % 2:
+        u.feed(memoryview(stream[i : i + 5]))
+    else:
+        u.feed(stream[i : i + 5])
+    i += 5
+    out.extend(u)
+print("feed mv alternating:", out == [[b"ab", b"abcdefghij", None], {"k": 1}])
+
+ba = bytearray(stream)
+u = m.Unpacker()
+u.feed(memoryview(ba)[:20])
+for i in range(len(ba)):
+    ba[i] = 0xFF
+u.feed(stream[20:])
+print("feed mv copied:", list(u) == [[b"ab", b"abcdefghij", None], {"k": 1}])

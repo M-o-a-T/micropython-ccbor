@@ -13,7 +13,11 @@ uses [Semantic Versioning](https://semver.org/).
   copies — zero-copy decoding of large payloads. `load()` and `Unpacker`
   reject the option (a stream has no buffer to refer to, and `feed()`
   moves the Unpacker's buffer); decode `next_raw()`'s bytes with `loads()`
-  for the same effect there.
+  for the same effect there. On builds without `memoryview` the option
+  is silently ignored.
+- `Unpacker.feed()` documents what it always did: any read buffer goes
+  in — `bytes`, `bytearray`, `memoryview`, sliced or not — and the data
+  is copied, so the source may change or go away afterwards.
 
 ## [c1.0.0] - 2026-10-31
 
