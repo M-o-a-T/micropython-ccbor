@@ -1,11 +1,13 @@
 # Using ccbor
 
 `ccbor` is a [CBOR (RFC 8949)](https://www.rfc-editor.org/rfc/rfc8949)
-serializer for [MicroPython](https://micropython.org), written in C. Its API
-follows the shape of the `json` module (and of Peter Hinch's umsgpack, of
-which the msgpackc 1.0 module was a drop-in replacement): `dumps`, `dump`,
-`loads`, `load`, streams, incremental decoding and a decorator for your own
-types.
+serializer for [MicroPython](https://micropython.org): a C core (the `_ccbor`
+module — `dumps`, `dump`, `loads`, `load`, `Unpacker`, `Tag`) with a thin
+Python package (`ccbor`) around it that holds the tag registry,
+`register()`, `tag_serializable()` and `ALoader`. Its API follows the shape
+of the `json` module (and of Peter Hinch's umsgpack, of which the msgpackc
+1.0 module was a drop-in replacement): `dumps`, `dump`, `loads`, `load`,
+streams, incremental decoding and a decorator for your own types.
 
 - [1. Quick tour](#1-quick-tour)
 - [2. Supported types](#2-supported-types)
@@ -91,10 +93,22 @@ Incremental decoding: `feed(data)` appends bytes, iterating the unpacker
 yields every complete object. See
 [7. Streams and incremental decoding](#7-streams-and-incremental-decoding).
 
+### `ccbor.register(cls, tag, pack=None, unpack=None)`
+
+Registers `cls` — **any** class: your own or a built-in one (`complex`,
+`set`, `tuple`...) — for a CBOR tag number, with plain callables:
+`pack(obj, options)` is called when an instance of the class (or of a
+subclass) is packed, and `unpack(content, options)` when the tag number
+is decoded. `pack=None` (the default) keeps the native encoding if the
+class has one; `unpack=None` means the tag is not decodable. See
+[6. Tags: your own and built-in types](#6-tags-your-own-and-built-in-types).
+
 ### `ccbor.tag_serializable(tag_number, example=None)`
 
-Class decorator that registers a [tag](#6-tags-your-own-and-built-in-types)
-for your class, or (with `example=atype`) for a built-in type.
+Class decorator, the umsgpack-style sugar over
+[`register()`](#ccborregistercls-tag-packnone-unpacknone): a class with
+`packb()`/`unpackb()` methods registers for a tag, or (with
+`example=atype`) a built-in type does.
 
 ### `ccbor.ALoader(stream, **options)`
 
@@ -106,9 +120,8 @@ Asynchronous decoding of a stream, on top of `Unpacker`. See
 ```python
 ccbor.Tag                    # the tag wrapper type
 ccbor.float_precision        # "double" or "single": this build's float width
-ccbor.custom                 # {your class: tag number}
-ccbor.builtins               # {built-in type: (packer class, tag number)}
-ccbor.tags                   # {tag number: class}
+ccbor.custom                 # {class: (tag number, pack callable)}
+ccbor.tags                   # {tag number: unpack callable or None}
 ccbor.PackException          # base of the packing exceptions
 ccbor.UnpackException        # base of the unpacking exceptions
 ```
@@ -186,12 +199,77 @@ object being packed).
 CBOR's extension mechanism: a small integer (0 to `2**64-1`) that says what
 the item that follows is. Tags replace the extension types of the msgpack
 edition, but with a real difference: **the content is a CBOR item**, not raw
-bytes. Your `packb()` returns any encodable object (a list, a map, bytes,
-an int...), and your `unpackb()` receives that object back.
+bytes. Your packer returns any encodable object (a list, a map, bytes, an
+int...), and your unpacker receives that object back.
+
+The registry is `register(cls, tag, pack=None, unpack=None)`: it works for
+**any** class — your own or a built-in one — with plain callables:
 
 ```python
 import ccbor
 
+def pack_point(o, options):
+    return [o.x, o.y]                # packed as the tag's content
+
+def unpack_point(data, options):
+    return Point(*data)              # data is the decoded content: a list
+
+
+class Point:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+ccbor.register(Point, 100, pack_point, unpack_point)
+
+p = Point(3, 4)
+data = ccbor.dumps(p)                # d8 64 82 03 04: tag(100), [3, 4]
+q = ccbor.loads(data)                # Point(3, 4)
+```
+
+- `pack(obj, options)` is called when an instance of the class — or of any
+  subclass, found by following the class hierarchy — is packed. The
+  `options` dict is what was passed to `dumps`. `pack=None` (the default)
+  means the class is not encodable: packing raises
+  `UnsupportedTypeException` (and a built-in class keeps its native
+  encoding).
+- `unpack(content, options)` is called when the tag number is decoded,
+  with the load `options`. `unpack=None` (the default) means the tag is not
+  decodable: decoding it raises `NotImplementedError` — the shape to
+  register a tag you can only decode (a moat-style decoder).
+- The tag number must be an integer 0 to `2**64-1`, and not 2 or 3 (the
+  native bignum tags). Duplicate tag numbers and duplicate classes raise
+  `ValueError` at registration.
+
+### Built-in types
+
+A registered built-in type is packed through the tag whenever it appears,
+in priority over its native encoding (the umsgpack `mpk_*` trick):
+
+```python
+ccbor.register(complex, 80,
+               lambda o, options: [o.real, o.imag],
+               lambda data, options: complex(*data))
+
+ccbor.dumps(1 + 2j)                  # d850 82 f93c00 f94000:
+                                     # tag(80), [1.0, 2.0] (exact as halves)
+```
+
+The class hierarchy decides what a registration catches, exactly as
+`isinstance` does: a subclass of a registered class, a Python subclass of
+a registered built-in type, `OrderedDict` for `dict` and `namedtuple` for
+`tuple` are all caught; `bool` is not `int` here, so a registered `int`
+does not swallow `True`.
+
+### tag_serializable, the sugar
+
+`@ccbor.tag_serializable(tag_number)` is the umsgpack-style decorator over
+`register()`: a class with `packb()` and `unpackb()` methods registers for
+a tag. With `example=atype` the tag is registered for the built-in type
+instead, and the class's (static) `packb(obj, options)` / `unpackb(data,
+options)` become its codecs.
+
+```python
 @ccbor.tag_serializable(100)          # any number you like (0..2**64-1)
 class Point:
     def __init__(self, x, y):
@@ -203,17 +281,7 @@ class Point:
     @staticmethod
     def unpackb(data, options):
         return Point(*data)           # data is the decoded content: a list
-
-
-p = Point(3, 4)
-data = ccbor.dumps(p)                  # d8 64 82 03 04: tag(100), [3, 4]
-q = ccbor.loads(data)                 # Point(3, 4)
 ```
-
-`packb(self)` is called without arguments for your own classes, or as
-`packb(obj, options)` when the tag is registered for a built-in type (the
-`options` dict is what was passed to `dumps`). The same for `unpackb`:
-`unpackb(data, options)`.
 
 ### Timestamps, the recipe
 
@@ -237,25 +305,15 @@ class Timestamp:
         return Timestamp(data)         # data is the decoded int
 ```
 
-### Built-in types
+### The registry
 
-A registered built-in type is packed through the tag whenever it appears,
-in priority over its native encoding (the umsgpack `mpk_*` trick):
+The two dicts are the registry itself, plain module globals of the `ccbor`
+package (the C core reads them on every call, so registering takes effect
+immediately; a soft reset discards them together with the module):
 
 ```python
-@ccbor.tag_serializable(80, complex)
-class Complex:
-    @staticmethod
-    def packb(obj, options):
-        return [obj.real, obj.imag]   # any encodable content
-
-    @staticmethod
-    def unpackb(data, options):
-        return complex(*data)
-
-
-ccbor.dumps(1 + 2j)                    # d850 82 f93c00 f94000:
-                                      # tag(80), [1.0, 2.0] (exact as halves)
+ccbor.custom                 # {class: (tag number, pack callable or None)}
+ccbor.tags                   # {tag number: unpack callable or None}
 ```
 
 ### The Tag wrapper
@@ -305,8 +363,8 @@ for obj in u:                # every complete object, as it arrives
 
 ## 8. Asynchronous decoding (ALoader)
 
-`ccbor.ALoader` (in `ccbor_aio.py`, frozen into the firmware manifests)
-decodes the objects arriving on an asyncio `StreamReader`-like object:
+`ccbor.ALoader` (in the `ccbor` package, `ccbor/aio.py`, imported on first
+use) decodes the objects arriving on an asyncio `StreamReader`-like object:
 
 ```python
 import asyncio

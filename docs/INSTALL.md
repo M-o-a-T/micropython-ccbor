@@ -253,40 +253,52 @@ cd micropython/ports/stm32
 make BOARD=PYBV11 USER_C_MODULES=/path/to/cmodules
 ```
 
-That is all: `import ccbor` works on the new firmware. To check that the
-module is in a firmware, run `help("modules")` at its prompt and look for
-`ccbor`.
+That builds the C core. `import ccbor` also needs the Python package
+(section 7): freeze it with `FROZEN_MANIFEST` (add
+`package("ccbor", base_path="/path/to/python")` to your manifest), or copy
+it to the board's filesystem. `import _ccbor` alone works without it (the
+codec, but no tag registry and no `ALoader`).
+
+To check that the module is in a firmware, run `help("modules")` at its
+prompt and look for `_ccbor` (the C core) and `ccbor` (the package).
 
 The module needs nothing from the board and has no configuration to set. It
 adds about 11 KiB (ARM) to 15 KiB (ESP32) of flash, and reserves no RAM.
 
-## 7. The Python helpers
+## 7. The Python half: the ccbor package
 
-One optional Python file completes the C module. The firmware built by this
-repo (`make firmware`) already contains it.
+The C module is `_ccbor`; the `ccbor` you import is a small Python package
+around it that holds the tag registry (`ccbor.custom`, `ccbor.tags`),
+`register()` and `tag_serializable()`, and (on first use) `ccbor.ALoader`.
+The firmware built by this repo (`make firmware`) already contains it.
 
-| file | gives you | needed for |
+| files | gives you | needed for |
 |---|---|---|
-| `python/ccbor_aio.py` | `ccbor.ALoader` | asynchronous decoding with asyncio |
+| `python/ccbor/__init__.py` | the `ccbor` module itself: `register()`, the tag registry | registering tags |
+| `python/ccbor/aio.py` | `ccbor.ALoader` | asynchronous decoding with asyncio |
 
-To put them on a board without rebuilding, copy them with mpremote:
+To put the package on a board without rebuilding, copy it with mpremote:
 
 ```bash
-.venv/bin/mpremote connect PORT mkdir :lib + cp python/ccbor_aio.py :lib/
-````
+.venv/bin/mpremote connect PORT mkdir :lib/ccbor + cp python/ccbor/*.py :lib/ccbor/
+```
 
-or install them with `mip` from the board itself (when it has a network
+or install it with `mip` from the board itself (when it has a network
 connection) or from your computer:
 
 ```bash
 .venv/bin/mpremote connect PORT mip install github:M-o-a-T/micropython-ccbor
 ```
 
-To freeze them into your own firmware, add to your manifest:
+To freeze it into your own firmware, add to your manifest:
 
 ```python
-module("ccbor_aio.py", base_path="/path/to/python")
+package("ccbor", base_path="/path/to/python")
 ```
+
+Without the package only the C module is there: `import _ccbor` gives the
+codec (`dumps`/`loads`/streams/`Tag`), but no tag can be registered and
+`ccbor.ALoader` does not exist.
 
 ## 8. Troubleshooting
 
@@ -313,9 +325,13 @@ running esptool by hand with `-b 115200`.
 firmware without the module (for example one downloaded from
 micropython.org). Build and flash it as in section 5.
 
-**`ImportError: no module named 'ccbor_aio'`** when using
-`ccbor.ALoader`: your firmware does not include the helper; copy it as in
-section 7.
+**`ImportError: no module named 'ccbor'`** when the C module is there:
+the Python package (section 7) is missing — `import ccbor` needs it, only
+`import _ccbor` works without. Copy or freeze the package as in section 7.
+
+**`ImportError: no module named 'ccbor.aio'`** when using `ccbor.ALoader`:
+the firmware includes `ccbor/__init__.py` but not `ccbor/aio.py`; copy the
+whole package (both files) as in section 7.
 
 **The build of the unix port fails on macOS with `ffi.h` not found**: install
 libffi (`brew install libffi pkg-config`).

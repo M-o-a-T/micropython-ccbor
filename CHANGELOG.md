@@ -4,9 +4,27 @@ All notable changes to this project. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.1.0] - 2026-11-03
+
+The Python-package edition: the C module is now `_ccbor`, and `ccbor` is a
+small Python package around it that owns the tag registry. The primary API
+(`dumps`/`dump`/`loads`/`load`, `Unpacker`, `Tag`, `tag_serializable`, the
+options, the exceptions) is unchanged.
 
 **Added**
+- `ccbor.register(cls, tag, pack=None, unpack=None)`: register **any**
+  class — built-in types included, no wrapper class needed — with plain
+  `pack(obj, options)` / `unpack(content, options)` callables.
+  `pack=None` keeps the native encoding (or means "not encodable"),
+  `unpack=None` means "not decodable" (`NotImplementedError`), the shape
+  for decoder-only tags.
+- The pack-side tag lookup follows the class hierarchy (the MRO): one
+  dictionary hit on the type, then the bases — instead of scanning the
+  whole registry with `isinstance` for every packed object.
+- The `ccbor` package: `register()`, the registry (`ccbor.custom`,
+  `ccbor.tags`), `tag_serializable()` and `ccbor.ALoader` (lazily
+  imported from `ccbor/aio.py`) are Python now; the C core keeps only the
+  critical path.
 - `memoryview` packs as a byte string, like `bytes` and `bytearray`.
 - The `memory_min` load option: `loads(data, memory_min=N)` unpacks byte
   strings of at least N bytes as `memoryview`s into `data` instead of
@@ -18,6 +36,36 @@ uses [Semantic Versioning](https://semver.org/).
 - `Unpacker.feed()` documents what it always did: any read buffer goes
   in — `bytes`, `bytearray`, `memoryview`, sliced or not — and the data
   is copied, so the source may change or go away afterwards.
+
+**Changed**
+- The module split: the C module is `_ccbor` (the codec: `dumps`, `dump`,
+  `loads`, `load`, `Unpacker`, `Tag`, `float_precision`, the exceptions);
+  `ccbor` is the Python package to import, which re-exports all of it.
+  A firmware must now freeze the package (`package("ccbor", ...)` in the
+  manifest, or copy it to the board) for `import ccbor` to work;
+  `import _ccbor` alone has no tag registry and no `ALoader`.
+- The registry shapes (they are documented constants): `ccbor.custom` is
+  `{class: (tag number, pack callable)}`, `ccbor.tags` is
+  `{tag number: unpack callable or None}`. `ccbor.builtins` is removed.
+- The registry lives in the `ccbor` module's globals; the hidden
+  `_ccbor_ext` module is gone. The C core reads
+  `sys.modules["ccbor"].custom/.tags` on every call: registering takes
+  effect immediately, a soft reset discards the registry with the module.
+- A tag registered without an unpacker raises
+  `NotImplementedError: no unpacker for tag N` (was
+  `Tag class X lacks unpackb()`; the registry no longer remembers the
+  class).
+- `tag_serializable(nr, example=atype)` with a wrapper class that has no
+  `packb` raises `UnsupportedTypeException` on pack (was
+  `NotImplementedError`); `packb` is taken from the class at decoration
+  time.
+- A duplicate tag number raises `ValueError: Tag number N is already
+  registered` (the old message named the class, which the registry no
+  longer stores).
+
+**Fixed**
+- `tests/diff/diff_ccbor.py` crashed on the float32 build when a random
+  map key was a tuple: `canon()` turned it into an unhashable list.
 
 ## [c1.0.0] - 2026-10-31
 
