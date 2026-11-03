@@ -59,3 +59,14 @@ async def main():
 
 
 asyncio.run(main())
+
+
+# the lazy ALoader attribute works across repeated imports
+import sys
+
+print("ccbor" in sys.modules, sys.modules["ccbor"].__name__)
+del sys.modules["ccbor"]
+import ccbor  # noqa: F401,E402
+from ccbor import ALoader as A2  # noqa: F401,E402
+
+print(A2 is ALoader)

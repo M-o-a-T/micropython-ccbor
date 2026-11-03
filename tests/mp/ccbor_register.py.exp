@@ -1,0 +1,41 @@
+True
+True True
+True
+True
+True
+True
+NotImplementedError no unpacker for tag 84
+True
+True a b
+True
+e
+returned b'\xd8U\x82agah'
+d8566141 ('A', 'A')
+True
+True
+True
+True True
+True
+True
+ValueError Tag number 85 is already registered
+ValueError Class <class 'Point'> already registered with tag number 90
+ValueError tag 2 and 3 are the native bignum tags
+ValueError tag 2 and 3 are the native bignum tags
+ValueError Tag number -1 is negative
+TypeError pack must be callable
+TypeError unpack must be callable
+TypeError Tag number is not type integer
+True True
+True True
+True
+('pack', [('canonical', True), ('custom', 7)])
+unpack [('custom', 9), ('use_tuple', True)]
+True
+RuntimeError maximum recursion depth exceeded
+True
+True
+UnsupportedTypeException <class 'Point'>
+returned Tag(85, None)
+True
+TypeError ccbor registry damaged
+i

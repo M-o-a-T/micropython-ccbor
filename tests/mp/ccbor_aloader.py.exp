@@ -3,3 +3,5 @@ True
 EOFError
 True True True 8
 EOFError inside an object
+True ccbor
+True
