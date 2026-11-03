@@ -7,8 +7,10 @@ ok
 ok
 RuntimeError container changed size during packing
 RuntimeError container changed size during packing
-[98]
-TypeError _ccbor_ext registry damaged
+UnsupportedTypeException <class 'Fresh'>
+returned Tag(98, None)
+[96, 97, 98]
+TypeError ccbor registry damaged
 [] [] 1
 True
 TypeError unsupported type for __neg__: 'Unpacker'

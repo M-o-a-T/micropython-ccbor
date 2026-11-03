@@ -41,8 +41,8 @@
 //   returned bytes object without a copy.
 // - The decoder reads either straight from a buffer (loads, Unpacker) without
 //   copying, or from a stream (load) reading exactly the bytes it needs.
-// - Nothing is static state: the tag registry lives in a heap module
-//   placed in sys.modules, so a soft reset discards it with everything else.
+// - Nothing is static state: the tag registry lives in the Python ccbor
+//   module, so a soft reset discards it with everything else.
 // - Every length taken from the input is checked against the data really
 //   available before it is used, so corrupt or hostile input raises an
 //   exception instead of reading out of bounds or allocating huge buffers.
@@ -175,52 +175,43 @@ static inline bool len_exceeds_u32(size_t n) {
 }
 
 /******************************************************************************/
-// Tag registry (the tag_serializable decorator).
+// Tag registry.
 //
-// Three dicts: custom {user class: tag number},
-// builtins {type: (packer class, tag number)} and tags {tag number: class}
-// (the shape is umsgpack's, the mechanism is CBOR's). They are kept here as
-// attributes of a heap module "_ccbor_ext" stored in sys.modules: no root
-// pointers are needed, and a soft reset (which empties sys.modules) drops
-// them together with the classes they refer to.
+// The registry lives in the PYTHON ccbor module (ccbor.custom,
+// ccbor.tags - plain module globals, written by ccbor.register()); this C
+// core only reads it. The dicts are looked up in sys.modules["ccbor"] at
+// every pack/unpack call and nothing is cached, so registration, damage
+// and repair are immediately visible; a soft reset (which empties
+// sys.modules) discards the module and the registry together. With no
+// ccbor module in sys.modules there is no registry at all: nothing can be
+// registered, and unknown tags still decode to the Tag wrapper.
 
-static mp_obj_t ext_registry(bool create) {
+// sys.modules["ccbor"], or MP_OBJ_NULL if it is not there or not a module.
+// Never created, never written to from C.
+static mp_obj_t ccbor_mod(void) {
     mp_map_t *mods = &MP_STATE_VM(mp_loaded_modules_dict).map;
-    mp_map_elem_t *e = mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR__ccbor_ext), MP_MAP_LOOKUP);
-    if (e != NULL && mp_obj_is_type(e->value, &mp_type_module)) {
-        return e->value;
-    }
-    if (!create) {
-        return MP_OBJ_NULL;
-    }
-    if (e != NULL) {
-        mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR__ccbor_ext), MP_MAP_LOOKUP_REMOVE_IF_FOUND);
-    }
-    mp_obj_t mod = mp_obj_new_module(MP_QSTR__ccbor_ext);
-    mp_obj_t globals = MP_OBJ_FROM_PTR(mp_obj_module_get_globals(mod));
-    mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_custom), mp_obj_new_dict(0));
-    mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_builtins), mp_obj_new_dict(0));
-    mp_obj_dict_store(globals, MP_OBJ_NEW_QSTR(MP_QSTR_tags), mp_obj_new_dict(0));
-    return mod;
+    mp_map_elem_t *e = mp_map_lookup(mods, MP_OBJ_NEW_QSTR(MP_QSTR_ccbor), MP_MAP_LOOKUP);
+    return (e != NULL && mp_obj_is_type(e->value, &mp_type_module)) ? e->value : MP_OBJ_NULL;
 }
 
-static mp_obj_t ext_dict(mp_obj_t reg, qstr name) {
-    mp_obj_t globals = MP_OBJ_FROM_PTR(mp_obj_module_get_globals(reg));
-    mp_obj_t d = mp_obj_dict_get(globals, MP_OBJ_NEW_QSTR(name));
-    if (!mp_obj_is_dict_or_ordereddict(d)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("_ccbor_ext registry damaged"));
-    }
-    return d;
-}
-
-// The map of a registry dict, or NULL if there is no registry or it is empty
-// (the common case, which then costs nothing per packed object).
-static mp_map_t *ext_map(qstr name) {
-    mp_obj_t reg = ext_registry(false);
-    if (reg == MP_OBJ_NULL) {
+// The map of the ccbor.<name> registry dict ("custom" or "tags"), or NULL
+// if there is no ccbor module, the attribute is missing, or the dict is
+// empty (the common case, which then costs nothing per packed object).
+// A damaged registry (the attribute is not a dict) is a TypeError.
+static mp_map_t *reg_map(qstr name) {
+    mp_obj_t mod = ccbor_mod();
+    if (mod == MP_OBJ_NULL) {
         return NULL;
     }
-    mp_map_t *map = mp_obj_dict_get_map(ext_dict(reg, name));
+    mp_obj_t dict = mp_obj_module_get_globals(mod);
+    mp_map_elem_t *e = mp_map_lookup(mp_obj_dict_get_map(dict), MP_OBJ_NEW_QSTR(name), MP_MAP_LOOKUP);
+    if (e == NULL) {
+        return NULL;
+    }
+    if (!mp_obj_is_dict_or_ordereddict(e->value)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("ccbor registry damaged"));
+    }
+    mp_map_t *map = mp_obj_dict_get_map(e->value);
     return map->used ? map : NULL;
 }
 
@@ -375,8 +366,7 @@ typedef struct _packer_t {
     vstr_t vstr;
     mp_map_t *kw;         // **options of dumps/dump
     mp_obj_t options;     // the same as a dict, built on first use
-    mp_map_t *builtins;   // registered built-in tag types, NULL if none
-    mp_map_t *custom;     // registered user classes, NULL if none
+    mp_map_t *custom;     // ccbor.custom: {class: (tag, packfn)}, NULL if empty
     uint16_t depth;
     uint8_t fprec;
     bool canonical;       // sort map keys like cbor2 (RFC 8949 4.2.3)
@@ -793,7 +783,6 @@ static void pk_map(packer_t *p, mp_obj_t d) {
         vstr_init(&kp.vstr, 32);
         kp.kw = p->kw;
         kp.options = MP_OBJ_NULL;
-        kp.builtins = p->builtins;
         kp.custom = p->custom;
         kp.depth = 0;
         kp.fprec = p->fprec;
@@ -860,10 +849,6 @@ static void pk_map(packer_t *p, mp_obj_t d) {
     p->depth--;
 }
 
-static inline bool is_instance(mp_obj_t o, mp_obj_t type) {
-    return mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(mp_obj_get_type(o)), type);
-}
-
 // Tag number of a Tag object, as uint64. The Python-visible .tag is an
 // int; values above 2**63-1 only exist on builds with bigger ints (on
 // longlong builds the constructor rejects them).
@@ -895,8 +880,8 @@ static uint64_t tag_number(mp_obj_t t) {
 }
 
 // Tag header (mt6) followed by the packed content: a Tag instance packs
-// generically (D2), a registered class's packb() result packs as the
-// content (D1: the content is a CBOR item, not raw bytes).
+// generically (D2), a registered packfn's result packs as the content
+// (D1: the content is a CBOR item, not raw bytes).
 static void pk_tag(packer_t *p, mp_obj_t tag_num, mp_obj_t content) {
     uint64_t n = tag_number(tag_num);
     // Tags count towards the depth limit (review point 8): a packb()
@@ -908,55 +893,60 @@ static void pk_tag(packer_t *p, mp_obj_t tag_num, mp_obj_t content) {
     p->depth--;
 }
 
-// A registered built-in type (e.g. complex, set, tuple) has priority over
-// the native encodings, as in umsgpack. Returns false if o has no tag
-// packer. The packb() result is packed as the tag CONTENT (D1).
-static bool pk_builtin_ext(packer_t *p, mp_obj_t o) {
-    mp_map_t *map = p->builtins;
-    for (size_t i = 0; i < map->alloc; i++) {
-        if (!mp_map_slot_is_filled(map, i) || !is_instance(o, map->table[i].key)) {
-            continue;
+// The (tag number, packfn) pair registered for a class, or MP_OBJ_NULL.
+// One dict hit on the type itself; on a miss the MRO is followed through
+// the parent slot (a tuple parent is multiple inheritance: every base but
+// the last is searched recursively, the last iteratively - the same shape
+// as mp_obj_is_subclass_fast). A packfn of None (registered without a
+// packer) returns NULL: the native encoding stays in charge.
+static mp_obj_t class_lookup(const mp_map_t *map, const mp_obj_type_t *type) {
+    for (;;) {
+        mp_map_elem_t *e = mp_map_lookup((mp_map_t *)map, MP_OBJ_FROM_PTR(type), MP_MAP_LOOKUP);
+        if (e != NULL) {
+            size_t n;
+            mp_obj_t *pair;
+            mp_obj_tuple_get(e->value, &n, &pair);
+            return pair[1] == mp_const_none ? MP_OBJ_NULL : e->value;
         }
-        // value is (packer class, tag number)
-        size_t n;
-        mp_obj_t *pair;
-        mp_obj_tuple_get(map->table[i].value, &n, &pair);
-        mp_obj_t tag_num = pair[1];
-        mp_obj_t dest[4];
-        mp_load_method_maybe(pair[0], MP_QSTR_packb, dest);
-        if (dest[0] == MP_OBJ_NULL) {
-            raise_with_obj(&mp_type_NotImplementedError, "Class ",
-                MP_OBJ_FROM_PTR(mp_obj_get_type(o)), PRINT_REPR, " invalid packb()");
+        if (type == &mp_type_object || !MP_OBJ_TYPE_HAS_SLOT(type, parent)) {
+            return MP_OBJ_NULL;
         }
-        dest[2] = o;
-        dest[3] = options_dict(&p->options, p->kw);
-        pk_tag(p, tag_num, mp_call_method_n_kw(2, 0, dest));
-        return true;
+        const mp_obj_type_t *parent = (const mp_obj_type_t *)MP_OBJ_TYPE_GET_SLOT(type, parent);
+        if (mp_obj_is_type(MP_OBJ_FROM_PTR(parent), &mp_type_tuple)) {
+            // Multiple inheritance: the tuple of bases (never empty - a
+            // class always has at least object, and type() rejects an
+            // empty bases tuple).
+            const mp_obj_tuple_t *bases = (const mp_obj_tuple_t *)MP_OBJ_FROM_PTR(parent);
+            for (size_t i = 0; i < bases->len - 1; i++) {
+                MP_STACK_CHECK();
+                mp_obj_t hit = class_lookup(map, (const mp_obj_type_t *)MP_OBJ_TO_PTR(bases->items[i]));
+                if (hit != MP_OBJ_NULL) {
+                    return hit;
+                }
+            }
+            type = (const mp_obj_type_t *)MP_OBJ_TO_PTR(bases->items[bases->len - 1]);
+        } else {
+            type = parent;
+        }
     }
-    return false;
 }
 
-// Last chance: an instance of a class registered with @tag_serializable(n).
-static void pk_custom_ext(packer_t *p, mp_obj_t o) {
-    mp_map_t *map = p->custom;
-    for (size_t i = 0; map != NULL && i < map->alloc; i++) {
-        if (!mp_map_slot_is_filled(map, i) || !is_instance(o, map->table[i].key)) {
-            continue;
-        }
-        mp_obj_t tag_num = map->table[i].value;
-        mp_obj_t dest[2];
-        mp_load_method_maybe(o, MP_QSTR_packb, dest);
-        if (dest[0] == MP_OBJ_NULL) {
-            break;
-        }
-        pk_tag(p, tag_num, mp_call_method_n_kw(0, 0, dest));
-        return;
-    }
-    raise_unsupported_type(o);
+// Pack o through its registered (tag number, packfn) pair: packfn(obj,
+// options) is called as a plain function, its result packs as the tag
+// CONTENT (D1: the content is a CBOR item, not raw bytes).
+static void pk_ext(packer_t *p, mp_obj_t o, mp_obj_t pair) {
+    size_t n;
+    mp_obj_t *items;
+    mp_obj_tuple_get(pair, &n, &items);
+    mp_obj_t args[2];
+    args[0] = o;
+    args[1] = options_dict(&p->options, p->kw);
+    pk_tag(p, items[0], mp_call_function_n_kw(items[1], 2, 0, args));
 }
 
 // Instances of subclasses of the native types (and native subtypes such as
-// namedtuple), in the order umsgpack tests them with isinstance().
+// namedtuple), in the order umsgpack tests them with isinstance(). A
+// registration already had its chance in pk_obj; this is the fallback.
 static void pk_subclass(packer_t *p, mp_obj_t o, const mp_obj_type_t *type) {
     static const mp_obj_type_t *const natives[] = {
         &mp_type_int,
@@ -986,7 +976,7 @@ static void pk_subclass(packer_t *p, mp_obj_t o, const mp_obj_type_t *type) {
         // Other native subtypes have an unknown layout: not packed natively.
         break;
     }
-    pk_custom_ext(p, o);
+    raise_unsupported_type(o);
 }
 
 static void pk_obj(packer_t *p, mp_obj_t o) {
@@ -998,8 +988,18 @@ static void pk_obj(packer_t *p, mp_obj_t o) {
         pk_byte(p, 0xf7);
         return;
     }
-    if (p->builtins != NULL && pk_builtin_ext(p, o)) {
-        return;
+    if (p->custom != NULL) {
+        // A registered class overrides the native encodings (umsgpack
+        // parity), whatever the type is - except a Tag instance, which
+        // always packs generically (D2).
+        const mp_obj_type_t *type = mp_obj_get_type(o);
+        if (type != &ccbor_tag_type) {
+            mp_obj_t pair = class_lookup(p->custom, type);
+            if (pair != MP_OBJ_NULL) {
+                pk_ext(p, o, pair);
+                return;
+            }
+        }
     }
     if (mp_obj_is_small_int(o)) {
         pk_int64(p, MP_OBJ_SMALL_INT_VALUE(o));
@@ -1071,8 +1071,7 @@ static void packer_init(packer_t *p, mp_map_t *kw) {
             p->fprec = FPREC_INVALID;
         }
     }
-    p->builtins = ext_map(MP_QSTR_builtins);
-    p->custom = ext_map(MP_QSTR_custom);
+    p->custom = reg_map(MP_QSTR_custom);
 }
 
 // dumps(obj, **options) -> bytes
@@ -1481,10 +1480,13 @@ static mp_obj_t up_bignum(unpacker_t *u, size_t n, bool negative) {
     #endif
 }
 
-// Tag content dispatch (D2): registry first (tags 2/3 are intercepted
+// Tag content dispatch (D2): the registry first (tags 2/3 are intercepted
 // before the registry by the caller), then the Tag wrapper. The 55799
 // self-describe tag is stripped like cbor2 does (also nested: stripping
-// happens here, on the way up).
+// happens here, on the way up). The registry maps a tag number to a plain
+// callable unpackfn(content, options); None means "registered without an
+// unpacker" and is a NotImplementedError, as a registered class without
+// unpackb() always was.
 static mp_obj_t up_tag_dispatch(unpacker_t *u, mp_obj_t tag_num, mp_obj_t content) {
     if (mp_obj_equal(tag_num, MP_OBJ_NEW_SMALL_INT(55799))) {
         return content; // self-describe: strip
@@ -1494,15 +1496,13 @@ static mp_obj_t up_tag_dispatch(unpacker_t *u, mp_obj_t tag_num, mp_obj_t conten
         e = mp_map_lookup(u->tags, tag_num, MP_MAP_LOOKUP);
     }
     if (e != NULL) {
-        mp_obj_t cls = e->value;
-        mp_obj_t dest[4];
-        mp_load_method_maybe(cls, MP_QSTR_unpackb, dest);
-        if (dest[0] == MP_OBJ_NULL) {
-            raise_with_obj(&mp_type_NotImplementedError, "Tag class ", cls, PRINT_REPR, " lacks unpackb()");
+        if (e->value == mp_const_none) {
+            raise_with_obj(&mp_type_NotImplementedError, "no unpacker for tag ", tag_num, PRINT_STR, "");
         }
-        dest[2] = content;
-        dest[3] = options_dict(&u->options, u->kw);
-        mp_obj_t obj = mp_call_method_n_kw(2, 0, dest);
+        mp_obj_t args[2];
+        args[0] = content;
+        args[1] = options_dict(&u->options, u->kw);
+        mp_obj_t obj = mp_call_function_n_kw(e->value, 2, 0, args);
         up_revalidate(u);
         return obj;
     }
@@ -1994,7 +1994,7 @@ static void unpacker_init(unpacker_t *u, mp_map_t *kw) {
         // says. Code that passes memory_min must run on both kinds.
         #endif
     }
-    u->tags = ext_map(MP_QSTR_tags);
+    u->tags = reg_map(MP_QSTR_tags);
 }
 
 static void unpacker_set_buffer(unpacker_t *u, mp_obj_t src, const byte *buf, size_t len) {
@@ -2372,112 +2372,21 @@ static MP_DEFINE_CONST_OBJ_TYPE(
     );
 
 /******************************************************************************/
-// tag_serializable(tag_number, example=None): class decorator.
-//
-// Registers a class for a CBOR tag number (0..2**64-1; tags 2 and 3 are
-// the native bignum tags and are rejected). With example= a built-in type
-// is registered instead: its instances (and instances of its subclasses)
-// pack through the class's packb(obj, options), like umsgpack's ext mechanism.
-
-static mp_obj_t tag_register(size_t n_args, const mp_obj_t *args) {
-    // args: tag_number, example (closed over by the decorator), cls
-    mp_obj_t tag_num = args[0];
-    mp_obj_t example = args[1];
-    mp_obj_t cls = args[2];
-    if (!mp_obj_is_int(tag_num)) {
-        mp_raise_TypeError(MP_ERROR_TEXT("Tag number is not type integer"));
-    }
-    // The number must be 0..2**64-1; on longlong builds an int cannot
-    // exceed 2**63-1, so >= 0 suffices there. Same rule as Tag().
-    if (mp_obj_int_sign(tag_num) < 0) {
-        raise_with_obj(&mp_type_ValueError, "Tag number ", tag_num, PRINT_STR,
-            " is negative");
-    }
-    #if MICROPY_LONGINT_IMPL == MICROPY_LONGINT_IMPL_MPZ
-    if (!mp_obj_is_small_int(tag_num)
-        && ((mp_obj_int_t *)MP_OBJ_TO_PTR(tag_num))->mpz.len * MPZ_DIG_SIZE > 64) {
-        raise_with_obj(&mp_type_ValueError, "Tag number ", tag_num, PRINT_STR,
-            " is out of range of 0 to 2**64-1");
-    }
-    #endif
-    // Tags 2 and 3 are the native bignum tags: registering them is an error
-    // (the decoder always converts them to int).
-    if (mp_obj_is_small_int(tag_num)
-        && (MP_OBJ_SMALL_INT_VALUE(tag_num) == 2 || MP_OBJ_SMALL_INT_VALUE(tag_num) == 3)) {
-        mp_raise_ValueError(MP_ERROR_TEXT("tag 2 and 3 are the native bignum tags"));
-    }
-    mp_obj_t reg = ext_registry(true);
-    mp_obj_t tags = ext_dict(reg, MP_QSTR_tags);
-    mp_obj_t custom = ext_dict(reg, MP_QSTR_custom);
-    mp_map_elem_t *e = mp_map_lookup(mp_obj_dict_get_map(tags), tag_num, MP_MAP_LOOKUP);
-    if (e != NULL) {
-        vstr_t vstr;
-        mp_print_t print;
-        vstr_init_print(&vstr, 48, &print);
-        mp_print_str(&print, "Tag number ");
-        mp_obj_print_helper(&print, tag_num, PRINT_STR);
-        mp_print_str(&print, " already registered with class ");
-        mp_obj_print_helper(&print, e->value, PRINT_REPR);
-        nlr_raise(mp_obj_new_exception_arg1(&mp_type_ValueError, mp_obj_new_str_from_vstr(&vstr)));
-    }
-    if (mp_map_lookup(mp_obj_dict_get_map(custom), cls, MP_MAP_LOOKUP) != NULL) {
-        vstr_t vstr;
-        mp_print_t print;
-        vstr_init_print(&vstr, 48, &print);
-        mp_print_str(&print, "Class ");
-        mp_obj_print_helper(&print, cls, PRINT_REPR);
-        mp_print_str(&print, " already registered with tag number ");
-        mp_obj_print_helper(&print, tag_num, PRINT_STR);
-        nlr_raise(mp_obj_new_exception_arg1(&mp_type_ValueError, mp_obj_new_str_from_vstr(&vstr)));
-    }
-    mp_obj_dict_store(tags, tag_num, cls);
-    if (example == mp_const_none) {
-        mp_obj_dict_store(custom, cls, tag_num);
-    } else {
-        mp_obj_t pair[2] = { cls, tag_num };
-        mp_obj_dict_store(ext_dict(reg, MP_QSTR_builtins), example, mp_obj_new_tuple(2, pair));
-    }
-    return cls;
-}
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(tag_register_obj, 3, 3, tag_register);
-
-static mp_obj_t ccbor_tag_serializable(size_t n_args, const mp_obj_t *args) {
-    mp_obj_t closed[2] = { args[0], n_args > 1 ? args[1] : mp_const_none };
-    return mp_obj_new_closure(MP_OBJ_FROM_PTR(&tag_register_obj), 2, closed);
-}
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(ccbor_tag_serializable_obj, 1, 2, ccbor_tag_serializable);
-
-/******************************************************************************/
-// Module
-
-// Module attributes that are not constants: the registry dicts (as umsgpack
-// exposes them) and ALoader, which is Python code in ccbor_aio.py.
-static mp_obj_t ccbor___getattr__(mp_obj_t attr) {
-    qstr name = mp_obj_str_get_qstr(attr);
-    if (name == MP_QSTR_custom || name == MP_QSTR_builtins || name == MP_QSTR_tags) {
-        return ext_dict(ext_registry(true), name);
-    }
-    if (name == MP_QSTR_ALoader) {
-        mp_obj_t mod = mp_import_name(MP_QSTR_ccbor_aio, mp_const_none, MP_OBJ_NEW_SMALL_INT(0));
-        return mp_load_attr(mod, MP_QSTR_ALoader);
-    }
-    return MP_OBJ_NULL;
-}
-static MP_DEFINE_CONST_FUN_OBJ_1(ccbor___getattr___obj, ccbor___getattr__);
+// Module. The tag registry is NOT here: it lives in the Python ccbor
+// module (ccbor.custom / ccbor.tags), together with register() and
+// tag_serializable(). This C core only reads the dicts (reg_map above).
 
 static MP_DEFINE_STR_OBJ(ccbor_version_obj, "2.0.0");
 
 static const mp_rom_map_elem_t ccbor_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_ccbor) },
+    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__ccbor) },
     { MP_ROM_QSTR(MP_QSTR___version__), MP_ROM_PTR(&ccbor_version_obj) },
-    { MP_ROM_QSTR(MP_QSTR___getattr__), MP_ROM_PTR(&ccbor___getattr___obj) },
     { MP_ROM_QSTR(MP_QSTR_dumps), MP_ROM_PTR(&ccbor_dumps_obj) },
     { MP_ROM_QSTR(MP_QSTR_dump), MP_ROM_PTR(&ccbor_dump_obj) },
     { MP_ROM_QSTR(MP_QSTR_loads), MP_ROM_PTR(&ccbor_loads_obj) },
     { MP_ROM_QSTR(MP_QSTR_load), MP_ROM_PTR(&ccbor_load_obj) },
     { MP_ROM_QSTR(MP_QSTR_Unpacker), MP_ROM_PTR(&ccbor_unpacker_type) },
     { MP_ROM_QSTR(MP_QSTR_Tag), MP_ROM_PTR(&ccbor_tag_type) },
-    { MP_ROM_QSTR(MP_QSTR_tag_serializable), MP_ROM_PTR(&ccbor_tag_serializable_obj) },
     { MP_ROM_QSTR(MP_QSTR_float_precision), MP_ROM_QSTR(CCBOR_FLOAT_PRECISION) },
     { MP_ROM_QSTR(MP_QSTR_PackException), MP_ROM_PTR(&mp_type_ccbor_PackException) },
     { MP_ROM_QSTR(MP_QSTR_UnpackException), MP_ROM_PTR(&mp_type_ccbor_UnpackException) },
@@ -2495,4 +2404,4 @@ const mp_obj_module_t mp_module_ccbor = {
     .globals = (mp_obj_dict_t *)&ccbor_module_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_ccbor, mp_module_ccbor);
+MP_REGISTER_MODULE(MP_QSTR__ccbor, mp_module_ccbor);

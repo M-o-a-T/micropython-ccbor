@@ -1,6 +1,6 @@
 {
   "urls": [
-    ["ccbor_aio.py", "github:M-o-a-T/micropython-ccbor/python/ccbor_aio.py"]
+    ["ccbor/", "github:M-o-a-T/micropython-ccbor/python/ccbor"]
   ],
   "version": "1.0.0"
 }

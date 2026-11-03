@@ -1,12 +1,12 @@
-# ccbor_aio.py: asynchronous CBOR decoding for ccbor.
+# ccbor/aio.py: asynchronous CBOR decoding for ccbor.
 #
 # Part of ccbor. MIT License, Copyright (c) 2026 Carlos Tangerino.
 #
 # The ALoader API follows Peter Hinch's umsgpack.ALoader
-# (https://github.com/peterhinch/micropython-msgpack), implemented here on
+# (https://github.com/peterhinch/micropython-msgpack), implemented on
 # top of the C ccbor.Unpacker: it decodes the CBOR objects arriving on an
-# asyncio StreamReader. It is normally reached as ccbor.ALoader: the C
-# module imports this file on first use.
+# asyncio StreamReader. It is normally reached as ccbor.ALoader: the
+# package imports this module on first use.
 
 import ccbor
 
