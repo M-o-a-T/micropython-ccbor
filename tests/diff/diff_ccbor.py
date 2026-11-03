@@ -76,12 +76,14 @@ def same_exc(a, b):
     return type(a).__name__ == type(b).__name__ and str(a) == str(b)
 
 
-def canon(o):
+def canon(o, key=False):
     "The object as the two modules should agree on it."
     if isinstance(o, (list, tuple)):
-        return [canon(x) for x in o]
+        # a map key stays a tuple: a list is unhashable, and decoded
+        # list keys are tuples anyway (the loader converts them)
+        return tuple(canon(x, True) for x in o) if key else [canon(x) for x in o]
     if isinstance(o, dict):
-        return {canon(k): canon(v) for k, v in o.items()}
+        return {canon(k, True): canon(v) for k, v in o.items()}
     if isinstance(o, (bytes, bytearray, memoryview)):
         return bytes(o)
     if o is ccbor.Tag and False:

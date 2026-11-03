@@ -12,7 +12,8 @@ True
 [('canonical', True), ('custom_option', 7)]
 [16, 17, 18, 80, 82]
 16 80
-ValueError Tag number 16 already registered with class <class 'Blob'>
+True True
+ValueError Tag number 16 is already registered
 ValueError Class <class 'Blob'> already registered with tag number 19
 ValueError tag 2 and 3 are the native bignum tags
 ValueError tag 2 and 3 are the native bignum tags

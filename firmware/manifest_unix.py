@@ -1,4 +1,5 @@
-# Unix port with ccbor: the port's usual frozen modules plus ccbor_aio.py,
-# so that ccbor.ALoader works as it does on the boards.
+# Unix port with ccbor: the port's usual frozen modules plus the ccbor
+# package (the Python half of the module), so that registering tags and
+# ccbor.ALoader work as they do on the boards.
 include("$(PORT_DIR)/variants/manifest.py")
-module("ccbor_aio.py", base_path="../python")
+package("ccbor", base_path="../python")

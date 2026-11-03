@@ -98,14 +98,19 @@ d = {"a%d" % i: i for i in range(10)}
 d["g"] = GrowDict(d)
 show(m.dumps, d)
 
-# the registry module replaced in sys.modules is rebuilt; broken dicts are an error
-reg = sys.modules["_ccbor_ext"]
-sys.modules["_ccbor_ext"] = 1
-m.tag_serializable(0x62)(type("Fresh", (), {}))
-print(sorted(int(k) for k in m.tags))
-sys.modules["_ccbor_ext"].tags = 1
+# the registry lives in the ccbor module; with ccbor hidden from
+# sys.modules the C core sees no registry at all, and a damaged dict is
+# an error
+reg = sys.modules["ccbor"]
+sys.modules["ccbor"] = 1
+show(m.dumps, type("Fresh", (), {})())
 show(m.loads, b"\xd8\x62\xf6")
-sys.modules["_ccbor_ext"] = reg
+sys.modules["ccbor"] = reg
+m.tag_serializable(0x62)(type("Fresh2", (), {}))
+print(sorted(int(k) for k in m.tags))
+sys.modules["ccbor"].tags = 1
+show(m.loads, b"\xd8\x62\xf6")
+sys.modules["ccbor"].tags = reg.tags
 
 # iterating an Unpacker again without feeding it, and other operations
 u = m.Unpacker()

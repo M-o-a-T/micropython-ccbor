@@ -106,9 +106,11 @@ class Opt:
 m.dumps(1.5, canonical=True, custom_option=7)
 print(seen[0])
 
-# the registry
+# the registry: {class: (tag, packfn)} and {tag: unpackfn}
 print(sorted(int(k) for k in m.tags))
-print(m.custom[Blob], m.builtins[complex][1])
+print(m.custom[Blob][0], m.custom[complex][0])
+# a class with packb but no unpackb registers as pack-only (tags value None)
+print(m.tags[0x12] is None, m.tags[0x50] is not None)
 
 
 # errors

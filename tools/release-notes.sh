@@ -35,9 +35,10 @@ $changes
 
 ## Ready-made firmware
 
-MicroPython $MP_VERSION with ccbor $VERSION built in (and \`ccbor.ALoader\`
-frozen), for the most common Espressif chips. Nothing to compile: download the
-file for your chip and write it to the board.
+MicroPython $MP_VERSION with ccbor $VERSION built in (and the \`ccbor\`
+Python package, with \`ccbor.ALoader\`, frozen), for the most common Espressif
+chips. Nothing to compile: download the file for your chip and write it to the
+board.
 
 | Your chip | File | Address |
 |---|---|---|
