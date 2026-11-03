@@ -2,5 +2,5 @@
   "urls": [
     ["ccbor/", "github:M-o-a-T/micropython-ccbor/python/ccbor"]
   ],
-  "version": "1.0.0"
+  "version": "2.1.0"
 }

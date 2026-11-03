@@ -7,8 +7,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 `ccbor` is a [CBOR (RFC 8949)](https://www.rfc-editor.org/rfc/rfc8949)
-serializer for [MicroPython](https://micropython.org), written in C as a
-user module. It began as `msgpackc`, a MessagePack accelerator with the API
+serializer for [MicroPython](https://micropython.org): a C user module
+(`_ccbor`) with a thin Python package (`ccbor`) around it that holds the
+tag registry and the asynchronous loader. It began as `msgpackc`, a
+MessagePack accelerator with the API
 of Peter Hinch's excellent pure-Python
 [umsgpack](https://github.com/peterhinch/micropython-msgpack), and was
 converted to CBOR wholesale: the same `dumps`/`loads`/streams shape, but
@@ -112,11 +114,12 @@ make USER_C_MODULES=/path/to/micropython-ccbor/cmodules                     # un
 ## Repository layout
 
 ```
-cmodules/                     the module: all you need to add it to a firmware
+cmodules/                     the C core (_ccbor): all you need to add it
   micropython.cmake           entry point for USER_C_MODULES (CMake ports)
   ccbor/modccbor.c            the code
 python/
-  ccbor_aio.py                ccbor.ALoader (asyncio)
+  ccbor/                      the ccbor package: register(), the tag
+                              registry, tag_serializable(), ccbor.ALoader
 tests/
   mp/                         the run-tests.py suite
   diff/                       refcbor (the pure-Python reference) and the
