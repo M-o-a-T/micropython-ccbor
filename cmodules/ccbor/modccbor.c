@@ -2376,7 +2376,7 @@ static MP_DEFINE_CONST_OBJ_TYPE(
 // module (ccbor.custom / ccbor.tags), together with register() and
 // tag_serializable(). This C core only reads the dicts (reg_map above).
 
-static MP_DEFINE_STR_OBJ(ccbor_version_obj, "2.1.0");
+static MP_DEFINE_STR_OBJ(ccbor_version_obj, "1.0.0");
 
 static const mp_rom_map_elem_t ccbor_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR__ccbor) },
